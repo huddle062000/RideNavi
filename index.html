@@ -3,15 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Ride Navi v1.3</title>
+  <meta name="theme-color" content="#1769e0">
+  <title>Ride Navi v1.4 β</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="panel">
     <div class="title-row">
-      <h1>🏍 Ride Navi <small>v1.3</small></h1>
-      <button id="collapseButton" class="small-button" type="button">－</button>
+      <h1>🏍 Ride Navi <small>v1.4 β</small></h1>
+      <button id="collapseButton" class="small-button" type="button" aria-label="操作パネルを折りたたむ">－</button>
     </div>
 
     <div id="panelContent">
@@ -19,10 +20,17 @@
 
       <div class="buttons">
         <button id="trackingButton" type="button">📍 現在地追跡を開始</button>
-        <button id="navigationButton" type="button">🧭 ナビモード</button>
+        <button id="navigationButton" class="primary-button" type="button">🧭 ナビ開始</button>
+        <button id="voiceButton" type="button">🔊 音声 ON</button>
         <button id="centerButton" type="button">🎯 現在地へ戻る</button>
         <button id="waypointButton" class="accent-button" type="button">➕ 通過地点を追加</button>
-        <button id="resetButton" class="danger-button" type="button">🔄 ルートをリセット</button>
+      </div>
+
+      <div class="share-buttons">
+        <button id="shareButton" class="share-button" type="button">📤 ルートを共有</button>
+        <button id="saveButton" type="button">💾 端末に保存</button>
+        <button id="loadButton" type="button">📂 保存ルートを開く</button>
+        <button id="resetButton" class="danger-button" type="button">🔄 リセット</button>
       </div>
 
       <section id="waypointSection">
@@ -46,6 +54,8 @@
         距離：未設定<br>
         時間：未設定
       </div>
+
+      <p class="beta-note">β版：音声案内は目安です。実際の道路標識・交通規制を優先してください。</p>
     </div>
   </div>
 

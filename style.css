@@ -19,7 +19,7 @@ html, body {
   top: 12px;
   left: 56px;
   z-index: 1000;
-  width: min(350px, calc(100vw - 85px));
+  width: min(390px, calc(100vw - 85px));
   max-height: calc(100vh - 70px);
   overflow-y: auto;
   padding: 12px;
@@ -39,21 +39,27 @@ html, body {
 #panel h1 small { font-size: 12px; font-weight: 600; color: #666; }
 #message { margin: 10px 0; font-size: 14px; line-height: 1.4; }
 
-.buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.buttons, .share-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.share-buttons { margin-top: 7px; }
 button {
-  padding: 9px 11px;
+  padding: 10px 11px;
+  min-height: 40px;
   border: 1px solid #777;
-  border-radius: 7px;
+  border-radius: 8px;
   background: white;
   font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   touch-action: manipulation;
 }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: .45; cursor: default; }
-.small-button { min-width: 36px; padding: 5px 9px; }
+.small-button { min-width: 38px; min-height: 34px; padding: 5px 9px; }
+.primary-button { background: #1769e0; color: white; border-color: #1769e0; }
+.share-button { background: #16794d; color: white; border-color: #16794d; }
 .accent-button.active { background: #1769e0; color: white; border-color: #1769e0; }
 .danger-button { border-color: #b42318; color: #8f1810; }
+.muted { opacity: .65; }
 
 #waypointSection {
   margin-top: 10px;
@@ -84,7 +90,7 @@ button:disabled { opacity: .45; cursor: default; }
 }
 .waypoint-name { min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .waypoint-actions { display: flex; gap: 3px; }
-.waypoint-actions button { padding: 4px 7px; min-width: 30px; font-size: 12px; }
+.waypoint-actions button { padding: 4px 7px; min-width: 30px; min-height: 30px; font-size: 12px; }
 
 #gpsInfo, #routeInfo {
   margin-top: 10px;
@@ -95,12 +101,22 @@ button:disabled { opacity: .45; cursor: default; }
   line-height: 1.5;
 }
 
+.beta-note {
+  margin: 9px 2px 0;
+  color: #6b4e00;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 #navStatus {
   position: fixed;
   left: 50%;
   bottom: 18px;
   transform: translateX(-50%);
   z-index: 1000;
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 10px 16px;
   border-radius: 999px;
   background: rgba(0,0,0,.78);
@@ -131,12 +147,20 @@ button:disabled { opacity: .45; cursor: default; }
   100% { box-shadow: 0 0 0 0 rgba(0,122,255,0); }
 }
 
-body.navigation-mode #panel { opacity: .92; }
-body.navigation-mode #navStatus { background: rgba(0,106,255,.9); }
+body.navigation-mode #panel { opacity: .94; }
+body.navigation-mode #navStatus { background: rgba(0,106,255,.92); }
 body.add-waypoint-mode #map { cursor: crosshair; }
 
 @media (max-width: 600px) {
-  #panel { left: 10px; right: 10px; top: 10px; width: auto; max-height: 58vh; }
-  #navStatus { bottom: 12px; }
-  button { font-size: 13px; padding: 8px 9px; }
+  #panel {
+    left: 8px;
+    right: 8px;
+    top: 8px;
+    width: auto;
+    max-height: 61vh;
+    padding: 10px;
+  }
+  #navStatus { bottom: 10px; font-size: 13px; }
+  button { font-size: 13px; padding: 9px 8px; flex-grow: 1; }
+  .small-button { flex-grow: 0; }
 }

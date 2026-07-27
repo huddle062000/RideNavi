@@ -1,11 +1,17 @@
+"use strict";
+
 const byId = (id) => document.getElementById(id);
 const message = byId("message");
 const routeInfo = byId("routeInfo");
 const gpsInfo = byId("gpsInfo");
 const trackingButton = byId("trackingButton");
 const navigationButton = byId("navigationButton");
+const voiceButton = byId("voiceButton");
 const centerButton = byId("centerButton");
 const waypointButton = byId("waypointButton");
+const shareButton = byId("shareButton");
+const saveButton = byId("saveButton");
+const loadButton = byId("loadButton");
 const resetButton = byId("resetButton");
 const collapseButton = byId("collapseButton");
 const panelContent = byId("panelContent");
@@ -13,8 +19,11 @@ const navStatus = byId("navStatus");
 const waypointList = byId("waypointList");
 const waypointCount = byId("waypointCount");
 
+const STORAGE_KEY = "rideNavi.savedRoute.v1";
+const ROUTE_PARAM = "r";
+
 if (typeof L === "undefined") {
-  message.textContent = "Leafletを読み込めませんでした。インターネット接続を確認してください";
+  message.textContent = "地図を読み込めませんでした。インターネット接続を確認してください";
   throw new Error("Leaflet load failed");
 }
 
@@ -40,10 +49,12 @@ let goalPoint = null;
 let startMarker = null;
 let goalMarker = null;
 let routeLine = null;
-let waypoints = []; // { id, point, marker, passed }
+let waypoints = [];
 let nextWaypointId = 1;
 let addWaypointMode = false;
 let routeRequestSerial = 0;
+let currentRoute = null;
+let navigationSteps = [];
 
 let watchId = null;
 let currentLocationMarker = null;
@@ -52,6 +63,9 @@ let latestPosition = null;
 let followCurrentLocation = true;
 let navigationMode = false;
 let panelCollapsed = false;
+let voiceEnabled = true;
+let lastSpokenAt = 0;
+let arrivalSpoken = false;
 
 map.on("click", async (event) => {
   if (!startPoint) {
@@ -83,6 +97,7 @@ function setStart(point) {
     .addTo(map).bindPopup("出発地");
   startMarker.on("dragend", async () => {
     startPoint = startMarker.getLatLng();
+    resetNavigationProgress();
     await calculateRoute();
   });
   message.textContent = "次に目的地をクリックしてください";
@@ -95,6 +110,7 @@ function setGoal(point) {
     .addTo(map).bindPopup("目的地");
   goalMarker.on("dragend", async () => {
     goalPoint = goalMarker.getLatLng();
+    resetNavigationProgress();
     await calculateRoute();
   });
   message.textContent = "ルートを検索しています…";
@@ -123,11 +139,12 @@ function addWaypoint(point) {
     .addTo(map).bindPopup(`通過地点 ${waypoints.length + 1}`);
   item.marker.on("dragend", async () => {
     item.point = item.marker.getLatLng();
-    item.passed = false;
+    resetNavigationProgress();
     renderWaypoints();
     await calculateRoute();
   });
   waypoints.push(item);
+  resetNavigationProgress();
   renderWaypoints();
   message.textContent = `通過地点${waypoints.length}を追加しました`;
 }
@@ -168,7 +185,7 @@ async function moveWaypoint(index, direction) {
   const newIndex = index + direction;
   if (newIndex < 0 || newIndex >= waypoints.length) return;
   [waypoints[index], waypoints[newIndex]] = [waypoints[newIndex], waypoints[index]];
-  waypoints.forEach((item) => { item.passed = false; });
+  resetNavigationProgress();
   renderWaypoints();
   await calculateRoute();
 }
@@ -176,6 +193,7 @@ async function moveWaypoint(index, direction) {
 async function removeWaypoint(index) {
   const [removed] = waypoints.splice(index, 1);
   if (removed?.marker) map.removeLayer(removed.marker);
+  resetNavigationProgress();
   renderWaypoints();
   await calculateRoute();
   message.textContent = "通過地点を削除してルートを引き直しました";
@@ -196,16 +214,17 @@ async function calculateRoute() {
     if (requestNumber !== routeRequestSerial) return;
     if (data.code !== "Ok" || !data.routes?.length) throw new Error("ルートが見つかりませんでした");
 
-    const route = data.routes[0];
+    currentRoute = data.routes[0];
+    navigationSteps = buildNavigationSteps(currentRoute);
     if (routeLine) map.removeLayer(routeLine);
-    routeLine = L.geoJSON(route.geometry, {
-      style: { color: "#1769e0", weight: 7, opacity: .85 }
+    routeLine = L.geoJSON(currentRoute.geometry, {
+      style: { color: "#1769e0", weight: 7, opacity: 0.85 }
     }).addTo(map);
 
     if (!navigationMode) map.fitBounds(routeLine.getBounds(), { padding: [45, 45] });
 
-    const distanceKm = route.distance / 1000;
-    const totalMinutes = Math.max(1, Math.round(route.duration / 60));
+    const distanceKm = currentRoute.distance / 1000;
+    const totalMinutes = Math.max(1, Math.round(currentRoute.duration / 60));
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
     const timeText = hours > 0 ? `${hours}時間${minutes}分` : `${minutes}分`;
@@ -220,24 +239,89 @@ async function calculateRoute() {
   }
 }
 
+function buildNavigationSteps(route) {
+  const result = [];
+  for (const leg of route.legs || []) {
+    for (const step of leg.steps || []) {
+      const location = step.maneuver?.location;
+      if (!Array.isArray(location) || location.length < 2) continue;
+      result.push({
+        point: L.latLng(location[1], location[0]),
+        instruction: maneuverText(step),
+        announced300: false,
+        announced100: false,
+        passed: false
+      });
+    }
+  }
+  return result;
+}
+
+function maneuverText(step) {
+  const maneuver = step.maneuver || {};
+  const type = maneuver.type || "";
+  const modifier = maneuver.modifier || "";
+  const road = step.name ? `、${step.name}へ` : "";
+
+  if (type === "arrive") return "目的地です";
+  if (type === "depart") return "ルートに沿って進んでください";
+  if (type === "roundabout" || type === "rotary") return `ロータリーに入り${road}進んでください`;
+  if (type === "merge") return `${directionText(modifier)}へ合流してください`;
+  if (type === "fork") return `${directionText(modifier)}方向へ進んでください`;
+  if (type === "on ramp") return `${directionText(modifier)}の入口へ進んでください`;
+  if (type === "off ramp") return `${directionText(modifier)}の出口へ進んでください`;
+  if (type === "continue" || type === "new name") return `${directionText(modifier)}方向${road}進んでください`;
+  if (type === "turn" || type === "end of road") return `${directionText(modifier)}${road}曲がってください`;
+  return `${directionText(modifier)}方向へ進んでください`;
+}
+
+function directionText(modifier) {
+  const table = {
+    "uturn": "Uターンして",
+    "sharp right": "大きく右",
+    "right": "右",
+    "slight right": "斜め右",
+    "straight": "直進",
+    "slight left": "斜め左",
+    "left": "左",
+    "sharp left": "大きく左"
+  };
+  return table[modifier] || "そのまま";
+}
+
 trackingButton.addEventListener("click", () => watchId === null ? startTracking() : stopTracking());
 
 navigationButton.addEventListener("click", () => {
   navigationMode = !navigationMode;
   if (navigationMode) {
+    if (!startPoint || !goalPoint || !currentRoute) {
+      navigationMode = false;
+      alert("先に出発地と目的地を設定してルートを表示してください");
+      return;
+    }
     if (watchId === null) startTracking();
     followCurrentLocation = true;
     document.body.classList.add("navigation-mode");
-    navigationButton.textContent = "🧭 ナビモード終了";
-    navStatus.textContent = "ナビモード ON・通過地点は自動通過";
+    navigationButton.textContent = "🧭 ナビ終了";
+    navStatus.textContent = "ナビモード ON・音声案内準備中";
     if (latestPosition) map.setView(latestPosition, 16, { animate: true });
-    message.textContent = "ナビモードを開始しました。通過地点で操作は不要です";
+    message.textContent = "ナビを開始しました。通過地点で操作は不要です";
+    speak("ナビを開始します。安全運転で出発してください", true);
   } else {
     document.body.classList.remove("navigation-mode");
-    navigationButton.textContent = "🧭 ナビモード";
+    navigationButton.textContent = "🧭 ナビ開始";
     navStatus.textContent = "ナビモード OFF";
     message.textContent = "ナビモードを終了しました";
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }
+});
+
+voiceButton.addEventListener("click", () => {
+  voiceEnabled = !voiceEnabled;
+  voiceButton.textContent = voiceEnabled ? "🔊 音声 ON" : "🔇 音声 OFF";
+  voiceButton.classList.toggle("muted", !voiceEnabled);
+  if (voiceEnabled) speak("音声案内をオンにしました", true);
+  else if ("speechSynthesis" in window) window.speechSynthesis.cancel();
 });
 
 centerButton.addEventListener("click", () => {
@@ -259,7 +343,9 @@ function startTracking() {
   gpsInfo.innerHTML = "GPS：取得中…<br>精度：未取得<br>速度：未取得";
   followCurrentLocation = true;
   watchId = navigator.geolocation.watchPosition(updateCurrentLocation, handleLocationError, {
-    enableHighAccuracy: true, timeout: 15000, maximumAge: 2000
+    enableHighAccuracy: true,
+    timeout: 15000,
+    maximumAge: 2000
   });
   trackingButton.textContent = "⏹ 現在地追跡を停止";
 }
@@ -282,7 +368,13 @@ function updateCurrentLocation(position) {
 
   const accuracy = position.coords.accuracy || 0;
   if (!accuracyCircle) {
-    accuracyCircle = L.circle(point, { radius: accuracy, color: "#007aff", weight: 1, fillColor: "#007aff", fillOpacity: .12 }).addTo(map);
+    accuracyCircle = L.circle(point, {
+      radius: accuracy,
+      color: "#007aff",
+      weight: 1,
+      fillColor: "#007aff",
+      fillOpacity: 0.12
+    }).addTo(map);
   } else {
     accuracyCircle.setLatLng(point);
     accuracyCircle.setRadius(accuracy);
@@ -296,7 +388,13 @@ function updateCurrentLocation(position) {
   gpsInfo.innerHTML = `GPS：追跡中<br>精度：約${Math.round(accuracy)}m<br>速度：${speedKmh === null ? "取得できません" : "約" + Math.round(speedKmh) + "km/h"}`;
 
   checkPassedWaypoints(point, accuracy);
-  message.textContent = navigationMode ? "現在地を中央追尾しています" : "現在地をリアルタイム追跡しています";
+  if (navigationMode) {
+    updateVoiceNavigation(point, accuracy);
+    updateRemainingDistance(point);
+    message.textContent = "現在地を中央追尾しています";
+  } else {
+    message.textContent = "現在地をリアルタイム追跡しています";
+  }
 }
 
 function checkPassedWaypoints(currentPoint, accuracy) {
@@ -306,11 +404,71 @@ function checkPassedWaypoints(currentPoint, accuracy) {
   if (currentPoint.distanceTo(next.point) <= thresholdMeters) {
     next.passed = true;
     renderWaypoints();
+    speak(`通過地点${waypoints.indexOf(next) + 1}を通過しました`);
     const remaining = waypoints.filter((item) => !item.passed).length;
     navStatus.textContent = remaining
       ? `通過地点を自動通過・残り${remaining}か所`
       : "全通過地点を通過・目的地へ";
   }
+}
+
+function updateVoiceNavigation(currentPoint, accuracy) {
+  if (!navigationSteps.length) return;
+  const threshold = Math.max(35, Math.min(90, accuracy || 35));
+
+  for (const step of navigationSteps) {
+    if (step.passed) continue;
+    const distance = currentPoint.distanceTo(step.point);
+
+    if (!step.announced300 && distance <= 330 && distance > 130) {
+      step.announced300 = true;
+      speak(`およそ300メートル先、${step.instruction}`);
+      navStatus.textContent = `約${Math.round(distance / 10) * 10}m先：${step.instruction}`;
+      return;
+    }
+    if (!step.announced100 && distance <= 130 && distance > threshold) {
+      step.announced100 = true;
+      speak(`まもなく、${step.instruction}`);
+      navStatus.textContent = `まもなく：${step.instruction}`;
+      return;
+    }
+    if (distance <= threshold) {
+      step.passed = true;
+      return;
+    }
+  }
+
+  if (goalPoint && !arrivalSpoken) {
+    const distanceToGoal = currentPoint.distanceTo(goalPoint);
+    if (distanceToGoal <= Math.max(50, accuracy || 50)) {
+      arrivalSpoken = true;
+      speak("目的地に到着しました。お疲れさまでした", true);
+      navStatus.textContent = "目的地に到着しました";
+    }
+  }
+}
+
+function updateRemainingDistance(currentPoint) {
+  if (!goalPoint) return;
+  const directKm = currentPoint.distanceTo(goalPoint) / 1000;
+  if (directKm < 1) {
+    navStatus.dataset.remaining = `目的地まで直線約${Math.round(directKm * 1000)}m`;
+  } else {
+    navStatus.dataset.remaining = `目的地まで直線約${directKm.toFixed(1)}km`;
+  }
+}
+
+function speak(text, force = false) {
+  if (!voiceEnabled || !("speechSynthesis" in window)) return;
+  const now = Date.now();
+  if (!force && now - lastSpokenAt < 3500) return;
+  lastSpokenAt = now;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "ja-JP";
+  utterance.rate = 1.05;
+  utterance.pitch = 1.0;
+  window.speechSynthesis.speak(utterance);
 }
 
 function handleLocationError(error) {
@@ -327,19 +485,164 @@ function handleLocationError(error) {
   gpsInfo.innerHTML = "GPS：エラー<br>精度：未取得<br>速度：未取得";
 }
 
-resetButton.addEventListener("click", () => {
+function routePayload() {
+  if (!startPoint || !goalPoint) return null;
+  const compact = (point) => [Number(point.lat.toFixed(6)), Number(point.lng.toFixed(6))];
+  return {
+    v: 1,
+    s: compact(startPoint),
+    g: compact(goalPoint),
+    w: waypoints.map((item) => compact(item.point))
+  };
+}
+
+function encodePayload(payload) {
+  const json = JSON.stringify(payload);
+  const bytes = new TextEncoder().encode(json);
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodePayload(encoded) {
+  const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((encoded.length + 3) % 4);
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+function buildShareUrl() {
+  const payload = routePayload();
+  if (!payload) throw new Error("先にルートを作成してください");
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = `${ROUTE_PARAM}=${encodePayload(payload)}`;
+  return url.toString();
+}
+
+shareButton.addEventListener("click", async () => {
+  try {
+    const url = buildShareUrl();
+    const shareData = {
+      title: "Ride Navi 共有ルート",
+      text: "ツーリングルートを共有します",
+      url
+    };
+    if (navigator.share) {
+      await navigator.share(shareData);
+      message.textContent = "共有画面を開きました";
+    } else {
+      await copyText(url);
+      alert("共有URLをコピーしました。LINEなどへ貼り付けてください");
+      message.textContent = "共有URLをコピーしました";
+    }
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    alert(error.message || "共有できませんでした");
+  }
+});
+
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("URLをコピーできませんでした");
+}
+
+saveButton.addEventListener("click", () => {
+  const payload = routePayload();
+  if (!payload) return alert("先にルートを作成してください");
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    message.textContent = "この端末にルートを保存しました";
+    alert("ルートをこの端末に保存しました");
+  } catch (error) {
+    console.error(error);
+    alert("ルートを保存できませんでした");
+  }
+});
+
+loadButton.addEventListener("click", async () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return alert("この端末に保存されたルートはありません");
+    await applyPayload(JSON.parse(raw));
+    message.textContent = "保存ルートを開きました";
+  } catch (error) {
+    console.error(error);
+    alert("保存ルートを読み込めませんでした");
+  }
+});
+
+async function applyPayload(payload) {
+  if (!payload || !Array.isArray(payload.s) || !Array.isArray(payload.g)) {
+    throw new Error("共有ルートの形式が正しくありません");
+  }
+  clearRoute(false);
+  setStart(L.latLng(payload.s[0], payload.s[1]));
+  setGoal(L.latLng(payload.g[0], payload.g[1]));
+  for (const point of payload.w || []) addWaypoint(L.latLng(point[0], point[1]));
+  await calculateRoute();
+  if (routeLine) map.fitBounds(routeLine.getBounds(), { padding: [45, 45] });
+}
+
+async function loadRouteFromHash() {
+  const hash = window.location.hash.slice(1);
+  if (!hash.startsWith(`${ROUTE_PARAM}=`)) return;
+  try {
+    const encoded = hash.slice(ROUTE_PARAM.length + 1);
+    await applyPayload(decodePayload(encoded));
+    message.textContent = "共有されたルートを開きました";
+  } catch (error) {
+    console.error(error);
+    alert("共有ルートを開けませんでした。URLが途中で切れていないか確認してください");
+  }
+}
+
+function resetNavigationProgress() {
+  waypoints.forEach((item) => { item.passed = false; });
+  navigationSteps.forEach((step) => {
+    step.announced300 = false;
+    step.announced100 = false;
+    step.passed = false;
+  });
+  arrivalSpoken = false;
+}
+
+function clearRoute(clearHash = true) {
   setAddWaypointMode(false);
   for (const layer of [startMarker, goalMarker, routeLine, ...waypoints.map((w) => w.marker)]) {
     if (layer) map.removeLayer(layer);
   }
-  startPoint = goalPoint = null;
-  startMarker = goalMarker = routeLine = null;
+  startPoint = null;
+  goalPoint = null;
+  startMarker = null;
+  goalMarker = null;
+  routeLine = null;
+  currentRoute = null;
+  navigationSteps = [];
   waypoints = [];
   routeRequestSerial++;
+  arrivalSpoken = false;
   renderWaypoints();
   routeInfo.innerHTML = "距離：未設定<br>時間：未設定";
+  if (clearHash && window.location.hash) history.replaceState(null, "", window.location.pathname + window.location.search);
+}
+
+resetButton.addEventListener("click", () => {
+  clearRoute(true);
   message.textContent = "地図をクリックして出発地を選んでください";
   navStatus.textContent = navigationMode ? "ナビモード ON" : "ナビモード OFF";
 });
 
 renderWaypoints();
+loadRouteFromHash();
