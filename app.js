@@ -22,6 +22,7 @@ const waypointCount = byId("waypointCount");
 
 const STORAGE_KEY = "rideNavi.savedRoute.v1";
 const ROUTE_PARAM = "r";
+const GEO_OPTIONS = { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 };
 
 if (typeof L === "undefined") {
   message.textContent = "地図を読み込めませんでした。インターネット接続を確認してください";
@@ -340,10 +341,22 @@ voiceButton.addEventListener("click", () => {
   else if ("speechSynthesis" in window) window.speechSynthesis.cancel();
 });
 
-centerButton.addEventListener("click", () => {
-  if (!latestPosition) return alert("まだ現在地を取得できていません");
+centerButton.addEventListener("click", async () => {
   followCurrentLocation = true;
-  map.setView(latestPosition, Math.max(map.getZoom(), 16));
+  if (!latestPosition) {
+    message.textContent = "現在地を取得して地図を移動します…";
+    gpsInfo.innerHTML = "GPS：現在地を1回取得中…<br>権限：確認中<br>精度：未取得<br>緯度・経度：未取得";
+    try {
+      const position = await getCurrentPositionOnce();
+      updateCurrentLocation(position);
+      map.setView(latestPosition, 17, { animate: true });
+      message.textContent = "現在地を取得して中央に表示しました";
+    } catch (error) {
+      handleLocationError(error, false);
+    }
+    return;
+  }
+  map.setView(latestPosition, Math.max(map.getZoom(), 16), { animate: true });
   message.textContent = "現在地を地図の中央に戻しました";
 });
 
@@ -353,24 +366,61 @@ collapseButton.addEventListener("click", () => {
   collapseButton.textContent = panelCollapsed ? "＋" : "－";
 });
 
-function startTracking() {
-  if (!navigator.geolocation) return alert("この端末は現在地取得に対応していません");
+async function startTracking() {
+  if (!navigator.geolocation) {
+    alert("この端末は現在地取得に対応していません");
+    return;
+  }
+  if (watchId !== null) return;
+
   message.textContent = "現在地を取得しています…";
-  gpsInfo.innerHTML = "GPS：取得中…<br>精度：未取得<br>速度：未取得";
+  gpsInfo.innerHTML = "GPS：初回位置を取得中…<br>権限：確認中<br>精度：未取得<br>緯度・経度：未取得";
   followCurrentLocation = true;
-  watchId = navigator.geolocation.watchPosition(updateCurrentLocation, handleLocationError, {
-    enableHighAccuracy: true,
-    timeout: 15000,
-    maximumAge: 2000
+  trackingButton.disabled = true;
+  trackingButton.textContent = "⏳ GPS取得中…";
+
+  try {
+    await updatePermissionDisplay();
+    const firstPosition = await getCurrentPositionOnce();
+    updateCurrentLocation(firstPosition);
+
+    watchId = navigator.geolocation.watchPosition(
+      updateCurrentLocation,
+      (error) => handleLocationError(error, true),
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 1000 }
+    );
+    trackingButton.textContent = "⏹ 現在地追跡を停止";
+    message.textContent = "現在地の追跡を開始しました";
+  } catch (error) {
+    handleLocationError(error, false);
+    trackingButton.textContent = "📍 現在地追跡を開始";
+  } finally {
+    trackingButton.disabled = false;
+  }
+}
+
+function getCurrentPositionOnce() {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, GEO_OPTIONS);
   });
-  trackingButton.textContent = "⏹ 現在地追跡を停止";
+}
+
+async function updatePermissionDisplay() {
+  if (!navigator.permissions?.query) return;
+  try {
+    const permission = await navigator.permissions.query({ name: "geolocation" });
+    const labels = { granted: "許可", prompt: "確認待ち", denied: "拒否" };
+    gpsInfo.innerHTML = `GPS：初回位置を取得中…<br>権限：${labels[permission.state] || permission.state}<br>精度：未取得<br>緯度・経度：未取得`;
+  } catch (_) {
+    // 一部ブラウザではPermissions APIが使えないため、そのまま続行します。
+  }
 }
 
 function stopTracking() {
   if (watchId !== null) navigator.geolocation.clearWatch(watchId);
   watchId = null;
   trackingButton.textContent = "📍 現在地追跡を開始";
-  gpsInfo.innerHTML = "GPS：停止中<br>精度：未取得<br>速度：未取得";
+  gpsInfo.innerHTML = "GPS：停止中<br>権限：未確認<br>精度：未取得<br>緯度・経度：未取得";
   message.textContent = "現在地追跡を停止しました";
 }
 
@@ -401,7 +451,7 @@ function updateCurrentLocation(position) {
 
   const speedMps = position.coords.speed;
   const speedKmh = typeof speedMps === "number" && speedMps >= 0 ? speedMps * 3.6 : null;
-  gpsInfo.innerHTML = `GPS：追跡中<br>精度：約${Math.round(accuracy)}m<br>速度：${speedKmh === null ? "取得できません" : "約" + Math.round(speedKmh) + "km/h"}`;
+  gpsInfo.innerHTML = `GPS：追跡中<br>精度：約${Math.round(accuracy)}m<br>速度：${speedKmh === null ? "取得できません" : "約" + Math.round(speedKmh) + "km/h"}<br>緯度：${point.lat.toFixed(6)}<br>経度：${point.lng.toFixed(6)}`;
 
   checkPassedWaypoints(point, accuracy);
   if (navigationMode) {
@@ -544,18 +594,28 @@ function speak(text, force = false) {
   window.speechSynthesis.speak(utterance);
 }
 
-function handleLocationError(error) {
+function handleLocationError(error, stopWatcher = true) {
   console.error(error);
   let errorText = "現在地を取得できませんでした";
-  if (error.code === error.PERMISSION_DENIED) errorText = "位置情報が許可されていません。ブラウザの位置情報を許可してください";
-  else if (error.code === error.POSITION_UNAVAILABLE) errorText = "現在地を取得できません。GPSの受信状態を確認してください";
-  else if (error.code === error.TIMEOUT) errorText = "現在地の取得がタイムアウトしました";
-  message.textContent = errorText;
-  alert(errorText);
-  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-  watchId = null;
+  let detail = `コード：${error?.code ?? "不明"}`;
+  if (error?.code === 1) {
+    errorText = "位置情報が許可されていません";
+    detail = "Chromeのサイト設定で位置情報を「許可」にしてください";
+  } else if (error?.code === 2) {
+    errorText = "現在地を取得できません";
+    detail = "屋外へ移動し、スマホの位置情報をオンにして再試行してください";
+  } else if (error?.code === 3) {
+    errorText = "現在地の取得がタイムアウトしました";
+    detail = "もう一度押すか、屋外で試してください";
+  }
+  message.textContent = `${errorText}。${detail}`;
+  gpsInfo.innerHTML = `GPS：エラー<br>${errorText}<br>${detail}<br>HTTPS：${window.isSecureContext ? "有効" : "無効"}`;
+  alert(`${errorText}
+${detail}`);
+  if (stopWatcher && watchId !== null) navigator.geolocation.clearWatch(watchId);
+  if (stopWatcher) watchId = null;
+  trackingButton.disabled = false;
   trackingButton.textContent = "📍 現在地追跡を開始";
-  gpsInfo.innerHTML = "GPS：エラー<br>精度：未取得<br>速度：未取得";
 }
 
 function routePayload() {
