@@ -164,3 +164,6 @@ body.add-waypoint-mode #map { cursor: crosshair; }
   button { font-size: 13px; padding: 9px 8px; flex-grow: 1; }
   .small-button { flex-grow: 0; }
 }
+
+#navStatus.off-route { background: rgba(190, 35, 25, .95); animation: offRoutePulse 1.2s infinite; }
+@keyframes offRoutePulse { 0%,100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.03); } }

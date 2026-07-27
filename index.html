@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#1769e0">
-  <title>Ride Navi v1.4 β</title>
+  <title>Ride Navi v1.5 β</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="panel">
     <div class="title-row">
-      <h1>🏍 Ride Navi <small>v1.4 β</small></h1>
+      <h1>🏍 Ride Navi <small>v1.5 β</small></h1>
       <button id="collapseButton" class="small-button" type="button" aria-label="操作パネルを折りたたむ">－</button>
     </div>
 
@@ -22,6 +22,7 @@
         <button id="trackingButton" type="button">📍 現在地追跡を開始</button>
         <button id="navigationButton" class="primary-button" type="button">🧭 ナビ開始</button>
         <button id="voiceButton" type="button">🔊 音声 ON</button>
+        <button id="voiceTestButton" type="button">🎧 音声テスト</button>
         <button id="centerButton" type="button">🎯 現在地へ戻る</button>
         <button id="waypointButton" class="accent-button" type="button">➕ 通過地点を追加</button>
       </div>
@@ -52,10 +53,11 @@
 
       <div id="routeInfo">
         距離：未設定<br>
-        時間：未設定
+        時間：未設定<br>
+        到着予想：未設定
       </div>
 
-      <p class="beta-note">β版：音声案内は目安です。実際の道路標識・交通規制を優先してください。</p>
+      <p class="beta-note">β版：音声案内・ルート逸脱警告は目安です。実際の道路標識・交通規制を優先してください。</p>
     </div>
   </div>
 

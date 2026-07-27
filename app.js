@@ -7,6 +7,7 @@ const gpsInfo = byId("gpsInfo");
 const trackingButton = byId("trackingButton");
 const navigationButton = byId("navigationButton");
 const voiceButton = byId("voiceButton");
+const voiceTestButton = byId("voiceTestButton");
 const centerButton = byId("centerButton");
 const waypointButton = byId("waypointButton");
 const shareButton = byId("shareButton");
@@ -66,6 +67,9 @@ let panelCollapsed = false;
 let voiceEnabled = true;
 let lastSpokenAt = 0;
 let arrivalSpoken = false;
+let offRouteSpoken = false;
+let lastOffRouteAt = 0;
+let routeCoordinates = [];
 
 map.on("click", async (event) => {
   if (!startPoint) {
@@ -215,6 +219,7 @@ async function calculateRoute() {
     if (data.code !== "Ok" || !data.routes?.length) throw new Error("ルートが見つかりませんでした");
 
     currentRoute = data.routes[0];
+    routeCoordinates = (currentRoute.geometry?.coordinates || []).map((c) => L.latLng(c[1], c[0]));
     navigationSteps = buildNavigationSteps(currentRoute);
     if (routeLine) map.removeLayer(routeLine);
     routeLine = L.geoJSON(currentRoute.geometry, {
@@ -228,7 +233,9 @@ async function calculateRoute() {
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
     const timeText = hours > 0 ? `${hours}時間${minutes}分` : `${minutes}分`;
-    routeInfo.innerHTML = `距離：約${distanceKm.toFixed(1)}km<br>時間：約${timeText}<br>通過地点：${waypoints.length}か所`;
+    const arrivalTime = new Date(Date.now() + currentRoute.duration * 1000);
+    const arrivalText = arrivalTime.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+    routeInfo.innerHTML = `距離：約${distanceKm.toFixed(1)}km<br>時間：約${timeText}<br>到着予想：約${arrivalText}<br>通過地点：${waypoints.length}か所`;
     message.textContent = waypoints.length
       ? `通過地点${waypoints.length}か所を含むルートを表示しました`
       : "ルートを表示しました";
@@ -316,6 +323,15 @@ navigationButton.addEventListener("click", () => {
   }
 });
 
+voiceTestButton.addEventListener("click", () => {
+  if (!("speechSynthesis" in window)) return alert("このブラウザは音声読み上げに対応していません");
+  const wasEnabled = voiceEnabled;
+  voiceEnabled = true;
+  speak("音声案内のテストです。300メートル先、右方向です", true);
+  voiceEnabled = wasEnabled;
+  message.textContent = "音声テストを再生しました";
+});
+
 voiceButton.addEventListener("click", () => {
   voiceEnabled = !voiceEnabled;
   voiceButton.textContent = voiceEnabled ? "🔊 音声 ON" : "🔇 音声 OFF";
@@ -390,7 +406,8 @@ function updateCurrentLocation(position) {
   checkPassedWaypoints(point, accuracy);
   if (navigationMode) {
     updateVoiceNavigation(point, accuracy);
-    updateRemainingDistance(point);
+    updateRemainingDistance(point, speedKmh);
+    checkOffRoute(point, accuracy);
     message.textContent = "現在地を中央追尾しています";
   } else {
     message.textContent = "現在地をリアルタイム追跡しています";
@@ -448,13 +465,69 @@ function updateVoiceNavigation(currentPoint, accuracy) {
   }
 }
 
-function updateRemainingDistance(currentPoint) {
+function updateRemainingDistance(currentPoint, speedKmh) {
   if (!goalPoint) return;
-  const directKm = currentPoint.distanceTo(goalPoint) / 1000;
-  if (directKm < 1) {
-    navStatus.dataset.remaining = `目的地まで直線約${Math.round(directKm * 1000)}m`;
+  const nearest = nearestRouteIndex(currentPoint);
+  let remainingMeters = currentPoint.distanceTo(goalPoint);
+  if (nearest >= 0 && routeCoordinates.length > 1) {
+    remainingMeters = currentPoint.distanceTo(routeCoordinates[nearest]);
+    for (let i = nearest; i < routeCoordinates.length - 1; i += 1) {
+      remainingMeters += routeCoordinates[i].distanceTo(routeCoordinates[i + 1]);
+    }
+  }
+
+  const remainingText = remainingMeters < 1000
+    ? `残り約${Math.max(0, Math.round(remainingMeters / 10) * 10)}m`
+    : `残り約${(remainingMeters / 1000).toFixed(1)}km`;
+
+  let etaText = "";
+  const usableSpeed = typeof speedKmh === "number" && speedKmh >= 5 ? speedKmh : null;
+  if (usableSpeed) {
+    const minutes = Math.max(1, Math.round((remainingMeters / 1000) / usableSpeed * 60));
+    const eta = new Date(Date.now() + minutes * 60000);
+    etaText = `・到着予想 ${eta.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+
+  const activeStep = navigationSteps.find((step) => !step.passed);
+  const instructionText = activeStep ? `・${activeStep.instruction}` : "";
+  navStatus.textContent = `${remainingText}${etaText}${instructionText}`;
+}
+
+function nearestRouteIndex(currentPoint) {
+  if (!routeCoordinates.length) return -1;
+  let bestIndex = -1;
+  let bestDistance = Infinity;
+  routeCoordinates.forEach((point, index) => {
+    const distance = currentPoint.distanceTo(point);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function distanceFromRoute(currentPoint) {
+  const index = nearestRouteIndex(currentPoint);
+  return index < 0 ? Infinity : currentPoint.distanceTo(routeCoordinates[index]);
+}
+
+function checkOffRoute(currentPoint, accuracy) {
+  if (!routeCoordinates.length) return;
+  const distance = distanceFromRoute(currentPoint);
+  const threshold = Math.max(120, Math.min(220, (accuracy || 40) * 2.5));
+  const now = Date.now();
+
+  if (distance > threshold) {
+    navStatus.classList.add("off-route");
+    if (!offRouteSpoken || now - lastOffRouteAt > 60000) {
+      offRouteSpoken = true;
+      lastOffRouteAt = now;
+      speak("ルートから外れています。安全な場所で地図を確認してください", true);
+    }
   } else {
-    navStatus.dataset.remaining = `目的地まで直線約${directKm.toFixed(1)}km`;
+    navStatus.classList.remove("off-route");
+    if (distance < threshold * 0.65) offRouteSpoken = false;
   }
 }
 
@@ -616,6 +689,9 @@ function resetNavigationProgress() {
     step.passed = false;
   });
   arrivalSpoken = false;
+  offRouteSpoken = false;
+  lastOffRouteAt = 0;
+  navStatus.classList.remove("off-route");
 }
 
 function clearRoute(clearHash = true) {
@@ -630,11 +706,12 @@ function clearRoute(clearHash = true) {
   routeLine = null;
   currentRoute = null;
   navigationSteps = [];
+  routeCoordinates = [];
   waypoints = [];
   routeRequestSerial++;
   arrivalSpoken = false;
   renderWaypoints();
-  routeInfo.innerHTML = "距離：未設定<br>時間：未設定";
+  routeInfo.innerHTML = "距離：未設定<br>時間：未設定<br>到着予想：未設定";
   if (clearHash && window.location.hash) history.replaceState(null, "", window.location.pathname + window.location.search);
 }
 
