@@ -1,0 +1,142 @@
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+
+* { box-sizing: border-box; }
+
+#map {
+  width: 100%;
+  height: 100%;
+  background: #ddd;
+}
+
+#panel {
+  position: fixed;
+  top: 12px;
+  left: 56px;
+  z-index: 1000;
+  width: min(350px, calc(100vw - 85px));
+  max-height: calc(100vh - 70px);
+  overflow-y: auto;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.97);
+  box-shadow: 0 3px 14px rgba(0,0,0,.28);
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#panel h1 { margin: 0; font-size: 20px; }
+#panel h1 small { font-size: 12px; font-weight: 600; color: #666; }
+#message { margin: 10px 0; font-size: 14px; line-height: 1.4; }
+
+.buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+button {
+  padding: 9px 11px;
+  border: 1px solid #777;
+  border-radius: 7px;
+  background: white;
+  font-size: 14px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .45; cursor: default; }
+.small-button { min-width: 36px; padding: 5px 9px; }
+.accent-button.active { background: #1769e0; color: white; border-color: #1769e0; }
+.danger-button { border-color: #b42318; color: #8f1810; }
+
+#waypointSection {
+  margin-top: 10px;
+  padding: 9px;
+  border-radius: 8px;
+  background: #f7f8fa;
+  border: 1px solid #e0e3e8;
+}
+.section-title { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+#waypointCount { color: #555; font-size: 13px; }
+.hint { margin: 5px 0 8px; color: #666; font-size: 12px; line-height: 1.35; }
+.waypoint-list { display: grid; gap: 6px; }
+.empty-waypoints { color: #777; font-size: 13px; padding: 4px 0; }
+.waypoint-row {
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border-radius: 7px;
+  background: white;
+  border: 1px solid #d8dde5;
+}
+.waypoint-number {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: #f59e0b; color: #111; font-weight: 800; font-size: 13px;
+}
+.waypoint-name { min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.waypoint-actions { display: flex; gap: 3px; }
+.waypoint-actions button { padding: 4px 7px; min-width: 30px; font-size: 12px; }
+
+#gpsInfo, #routeInfo {
+  margin-top: 10px;
+  padding: 9px;
+  border-radius: 8px;
+  background: #f2f2f2;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+#navStatus {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.78);
+  color: white;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 3px 12px rgba(0,0,0,.28);
+  white-space: nowrap;
+}
+
+.start-icon, .goal-icon, .current-icon, .waypoint-icon {
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-weight: bold; border: 3px solid white;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+.start-icon, .goal-icon, .waypoint-icon { width: 30px !important; height: 30px !important; }
+.start-icon { background: #1877d2; color: white; }
+.goal-icon { background: #d63031; color: white; }
+.waypoint-icon { background: #f59e0b; color: #111; }
+.current-icon {
+  width: 22px !important; height: 22px !important;
+  background: #007aff; border-width: 4px;
+  animation: pulse 1.8s infinite;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(0,122,255,.5); }
+  70% { box-shadow: 0 0 0 16px rgba(0,122,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(0,122,255,0); }
+}
+
+body.navigation-mode #panel { opacity: .92; }
+body.navigation-mode #navStatus { background: rgba(0,106,255,.9); }
+body.add-waypoint-mode #map { cursor: crosshair; }
+
+@media (max-width: 600px) {
+  #panel { left: 10px; right: 10px; top: 10px; width: auto; max-height: 58vh; }
+  #navStatus { bottom: 12px; }
+  button { font-size: 13px; padding: 8px 9px; }
+}
