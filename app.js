@@ -35,6 +35,10 @@
   let headingUpEnabled = false;
   let headingButton = null;
   let lastKnownHeading = null;
+  let navigationInfoPanel = null;
+  let navigationDistanceValue = null;
+  let navigationEtaValue = null;
+  let navigationDurationValue = null;
 
   const OFF_ROUTE_DISTANCE_METERS = 80;
   const OFF_ROUTE_REQUIRED_COUNT = 3;
@@ -170,6 +174,7 @@
     routePathPoints = [];
     offRouteCount = 0;
     rerouteInProgress = false;
+    hideNavigationInfoPanel();
     if (navigationButton) navigationButton.disabled = true;
     if (directionsRenderer) {
       directionsRenderer.setDirections({ routes: [] });
@@ -650,6 +655,7 @@
 
       const route = result.routes[0];
       const totals = sumRouteTotals(route);
+      updateNavigationInfoPanel(route);
 
       routeInfo.innerHTML =
         `距離：${formatDistance(totals.totalDistance)}<br>` +
@@ -669,6 +675,7 @@
     navigationButton.type = "button";
     navigationButton.className = "primary";
     navigationButton.textContent = "▶ ナビ開始";
+    hideNavigationInfoPanel();
     navigationButton.disabled = true;
 
     routeButton.insertAdjacentElement("afterend", navigationButton);
@@ -709,6 +716,10 @@
     rerouteInProgress = false;
     navigationActive = true;
     navigationButton.textContent = "■ ナビ終了";
+    if (lastRouteResult?.routes?.[0]) {
+      updateNavigationInfoPanel(lastRouteResult.routes[0]);
+    }
+    showNavigationInfoPanel();
     followToggle.checked = true;
     map.panTo(point);
     closePanel();
@@ -907,6 +918,7 @@
 
       const route = result.routes[0];
       const totals = sumRouteTotals(route);
+      updateNavigationInfoPanel(route);
 
       routeInfo.innerHTML =
         `距離：${formatDistance(totals.totalDistance)}<br>` +
@@ -916,6 +928,143 @@
       closePanel();
       showStatus("経由地付きルートを表示しました", true);
     });
+  }
+
+  function createNavigationInfoPanel() {
+    if (document.getElementById("rideNaviInfoPanel")) return;
+
+    const style = document.createElement("style");
+    style.textContent = `
+      #rideNaviInfoPanel {
+        position: fixed;
+        left: 50%;
+        top: calc(12px + env(safe-area-inset-top));
+        transform: translateX(-50%);
+        z-index: 1000;
+        display: none;
+        grid-template-columns: repeat(3, minmax(84px, 1fr));
+        gap: 1px;
+        width: min(92vw, 430px);
+        overflow: hidden;
+        border-radius: 14px;
+        background: rgba(32, 33, 36, 0.92);
+        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32);
+        color: #ffffff;
+        backdrop-filter: blur(6px);
+      }
+
+      #rideNaviInfoPanel.visible {
+        display: grid;
+      }
+
+      .rideNaviInfoItem {
+        padding: 9px 8px 8px;
+        text-align: center;
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .rideNaviInfoLabel {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 11px;
+        opacity: 0.78;
+        white-space: nowrap;
+      }
+
+      .rideNaviInfoValue {
+        display: block;
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1.15;
+        white-space: nowrap;
+      }
+
+      @media (max-width: 380px) {
+        #rideNaviInfoPanel {
+          width: 94vw;
+        }
+
+        .rideNaviInfoItem {
+          padding-left: 4px;
+          padding-right: 4px;
+        }
+
+        .rideNaviInfoLabel {
+          font-size: 10px;
+        }
+
+        .rideNaviInfoValue {
+          font-size: 16px;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+
+    navigationInfoPanel = document.createElement("div");
+    navigationInfoPanel.id = "rideNaviInfoPanel";
+    navigationInfoPanel.setAttribute("aria-label", "ナビ情報");
+
+    const createItem = (label) => {
+      const item = document.createElement("div");
+      item.className = "rideNaviInfoItem";
+
+      const labelElement = document.createElement("span");
+      labelElement.className = "rideNaviInfoLabel";
+      labelElement.textContent = label;
+
+      const valueElement = document.createElement("strong");
+      valueElement.className = "rideNaviInfoValue";
+      valueElement.textContent = "―";
+
+      item.append(labelElement, valueElement);
+      navigationInfoPanel.appendChild(item);
+      return valueElement;
+    };
+
+    navigationDistanceValue = createItem("残り距離");
+    navigationEtaValue = createItem("到着予定");
+    navigationDurationValue = createItem("残り時間");
+
+    document.body.appendChild(navigationInfoPanel);
+  }
+
+  function formatEta(durationSeconds) {
+    const arrival = new Date(Date.now() + durationSeconds * 1000);
+    return arrival.toLocaleTimeString("ja-JP", {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  function updateNavigationInfoPanel(route) {
+    if (!navigationInfoPanel || !route?.legs?.length) return;
+
+    let totalDistance = 0;
+    let totalDuration = 0;
+
+    route.legs.forEach((leg) => {
+      totalDistance += leg.distance?.value || 0;
+      totalDuration +=
+        leg.duration_in_traffic?.value ||
+        leg.duration?.value ||
+        0;
+    });
+
+    navigationDistanceValue.textContent = formatDistance(totalDistance);
+    navigationEtaValue.textContent = formatEta(totalDuration);
+    navigationDurationValue.textContent = formatDuration(totalDuration);
+  }
+
+  function showNavigationInfoPanel() {
+    if (navigationInfoPanel) {
+      navigationInfoPanel.classList.add("visible");
+    }
+  }
+
+  function hideNavigationInfoPanel() {
+    if (navigationInfoPanel) {
+      navigationInfoPanel.classList.remove("visible");
+    }
   }
 
   function createZoomButtons() {
@@ -1070,9 +1219,10 @@
       });
 
       trafficLayer = new google.maps.TrafficLayer();
+      createNavigationInfoPanel();
       createZoomButtons();
 
-      showStatus("Ride Navi 2.8 方位切替版を読み込みました", true);
+      showStatus("Ride Navi 2.9 ナビ情報パネル版を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
