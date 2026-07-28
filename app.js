@@ -937,64 +937,78 @@
     style.textContent = `
       #rideNaviInfoPanel {
         position: fixed;
-        left: 50%;
-        top: calc(12px + env(safe-area-inset-top));
-        transform: translateX(-50%);
+        left: max(12px, env(safe-area-inset-left));
+        bottom: calc(18px + env(safe-area-inset-bottom));
         z-index: 1000;
         display: none;
-        grid-template-columns: repeat(3, minmax(84px, 1fr));
-        gap: 1px;
-        width: min(92vw, 430px);
-        overflow: hidden;
-        border-radius: 14px;
-        background: rgba(32, 33, 36, 0.92);
-        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32);
-        color: #ffffff;
-        backdrop-filter: blur(6px);
+        width: 190px;
+        padding: 0;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+        color: #000000;
+        pointer-events: none;
       }
 
       #rideNaviInfoPanel.visible {
-        display: grid;
+        display: block;
       }
 
       .rideNaviInfoItem {
-        padding: 9px 8px 8px;
-        text-align: center;
-        background: rgba(255, 255, 255, 0.06);
+        display: flex;
+        align-items: center;
+        min-height: 46px;
+        padding: 0;
+        background: transparent;
       }
 
       .rideNaviInfoLabel {
-        display: block;
-        margin-bottom: 3px;
-        font-size: 11px;
-        opacity: 0.78;
-        white-space: nowrap;
+        display: none;
       }
 
       .rideNaviInfoValue {
         display: block;
-        font-size: 18px;
-        font-weight: 700;
-        line-height: 1.15;
+        font-size: 27px;
+        font-weight: 800;
+        line-height: 1.05;
         white-space: nowrap;
+        color: #000000;
+        text-shadow:
+          -2px -2px 0 rgba(255, 255, 255, 0.96),
+           2px -2px 0 rgba(255, 255, 255, 0.96),
+          -2px  2px 0 rgba(255, 255, 255, 0.96),
+           2px  2px 0 rgba(255, 255, 255, 0.96),
+           0    2px 4px rgba(255, 255, 255, 0.90);
+      }
+
+      .rideNaviInfoItem:nth-child(1) .rideNaviInfoValue::before {
+        content: "📍";
+        margin-right: 7px;
+      }
+
+      .rideNaviInfoItem:nth-child(2) .rideNaviInfoValue::before {
+        content: "⏱";
+        margin-right: 7px;
+      }
+
+      .rideNaviInfoItem:nth-child(3) .rideNaviInfoValue::before {
+        content: "🕒";
+        margin-right: 7px;
       }
 
       @media (max-width: 380px) {
         #rideNaviInfoPanel {
-          width: 94vw;
+          left: max(8px, env(safe-area-inset-left));
+          bottom: calc(14px + env(safe-area-inset-bottom));
+          width: 170px;
         }
 
         .rideNaviInfoItem {
-          padding-left: 4px;
-          padding-right: 4px;
-        }
-
-        .rideNaviInfoLabel {
-          font-size: 10px;
+          min-height: 42px;
         }
 
         .rideNaviInfoValue {
-          font-size: 16px;
+          font-size: 24px;
         }
       }
     `;
@@ -1222,7 +1236,7 @@
       createNavigationInfoPanel();
       createZoomButtons();
 
-      showStatus("Ride Navi 2.9 ナビ情報パネル版を読み込みました", true);
+      showStatus("Ride Navi 2.10 透明縦型ナビ情報版を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
