@@ -4,44 +4,91 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#1a73e8">
-  <title>Ride Navi 2.1 β</title>
+  <title>Ride Navi 2.2 β</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main id="app">
     <div id="map"></div>
+
     <header class="top-bar">
-      <div><strong>🏍 Ride Navi</strong><span>2.1 β・ルート検索</span></div>
-      <button id="menuButton" type="button">☰</button>
+      <div>
+        <strong>🏍 Ride Navi</strong>
+        <span>2.2 β・経由地対応</span>
+      </div>
+      <button id="menuButton" type="button" aria-label="メニュー">☰</button>
     </header>
 
     <section id="controlPanel" class="control-panel is-hidden">
-      <div class="panel-title"><strong>ルートを作る</strong><button id="closePanelButton" type="button">✕</button></div>
+      <div class="panel-title">
+        <strong>ルートを作る</strong>
+        <button id="closePanelButton" type="button" aria-label="閉じる">✕</button>
+      </div>
 
-      <label class="field"><span>出発地</span><input id="originInput" type="text" placeholder="例：京都駅"></label>
-      <button id="useCurrentLocationButton" class="secondary" type="button">📍 現在地を出発地にする</button>
+      <label class="field">
+        <span>出発地</span>
+        <input id="originInput" type="text" placeholder="例：京都駅">
+      </label>
 
-      <label class="field"><span>目的地</span><input id="destinationInput" type="text" placeholder="例：道の駅 美山ふれあい広場"></label>
-      <button id="routeButton" class="primary" type="button">🧭 ルートを表示</button>
+      <button id="useCurrentLocationButton" class="secondary" type="button">
+        📍 現在地を出発地にする
+      </button>
+
+      <div class="waypoint-header">
+        <strong>経由地</strong>
+        <span id="waypointCount">0 / 5</span>
+      </div>
+
+      <div id="waypointList"></div>
+
+      <button id="addWaypointButton" class="secondary" type="button">
+        ＋ 経由地を追加
+      </button>
+
+      <label class="field">
+        <span>目的地</span>
+        <input id="destinationInput" type="text" placeholder="例：道の駅 美山ふれあい広場">
+      </label>
+
+      <button id="routeButton" class="primary" type="button">
+        🧭 ルートを表示
+      </button>
 
       <div class="button-grid">
         <button id="locationButton" type="button">現在地へ</button>
         <button id="clearRouteButton" type="button">ルート消去</button>
       </div>
 
-      <label class="toggle-row"><input id="followToggle" type="checkbox" checked><span>現在地を自動追従</span></label>
-      <label class="toggle-row"><input id="trafficToggle" type="checkbox"><span>渋滞情報を表示</span></label>
+      <label class="toggle-row">
+        <input id="followToggle" type="checkbox" checked>
+        <span>現在地を自動追従</span>
+      </label>
+
+      <label class="toggle-row">
+        <input id="trafficToggle" type="checkbox">
+        <span>渋滞情報を表示</span>
+      </label>
 
       <button id="voiceTestButton" class="secondary" type="button">🔊 音声テスト</button>
 
-      <div id="routeInfo" class="info-box">距離：未設定<br>時間：未設定</div>
-      <div id="gpsInfo" class="info-box muted-box">GPS：未取得<br>精度：未取得</div>
+      <div id="routeInfo" class="info-box">
+        距離：未設定<br>
+        時間：未設定<br>
+        経由地：0か所
+      </div>
 
-      <p class="note">道路標識・交通規制を優先してください。次版で通過地点を追加します。</p>
+      <div id="gpsInfo" class="info-box muted-box">
+        GPS：未取得<br>
+        精度：未取得
+      </div>
+
+      <p class="note">
+        経由地は入力した順番に通ります。道路標識・交通規制を優先してください。
+      </p>
     </section>
 
     <div id="status" class="status">地図を読み込んでいます…</div>
-    <button id="floatingLocationButton" class="floating-location" type="button">◎</button>
+    <button id="floatingLocationButton" class="floating-location" type="button" aria-label="現在地へ">◎</button>
   </main>
 
   <script src="config.js"></script>
