@@ -41,7 +41,7 @@
   let navigationDurationValue = null;
 
   const OFF_ROUTE_DISTANCE_METERS = 80;
-  const OFF_ROUTE_REQUIRED_COUNT = 3;
+  const OFF_ROUTE_REQUIRED_COUNT = 2;
   const REROUTE_COOLDOWN_MS = 20000;
   const clearRouteButton = $("clearRouteButton");
   const locationButton = $("locationButton");
