@@ -30,13 +30,12 @@
   const gpsInfo = $("gpsInfo");
 
   let map = null;
-  let RouteClass = null;
+  let directionsService = null;
+  let directionsRenderer = null;
   let trafficLayer = null;
   let currentPosition = null;
   let userMarker = null;
   let accuracyCircle = null;
-  let routePolylines = [];
-  let routeMarkers = [];
   let statusTimer = null;
   let routeSearching = false;
 
@@ -54,7 +53,7 @@
     if (autoHide) {
       statusTimer = setTimeout(() => {
         statusEl.hidden = true;
-      }, 2500);
+      }, 2600);
     }
   }
 
@@ -109,6 +108,7 @@
     removeButton.addEventListener("click", () => {
       row.remove();
       updateWaypointDisplay();
+      updateRouteInfoEmpty();
       showStatus("経由地を削除しました", true);
     });
 
@@ -122,6 +122,7 @@
     waypointList.appendChild(row);
 
     updateWaypointDisplay();
+    updateRouteInfoEmpty();
     input.focus();
     showStatus("経由地を追加しました", true);
   }
@@ -132,40 +133,23 @@
       .filter(Boolean);
   }
 
-  function clearDisplayedRoute(showMessage = true) {
-    routePolylines.forEach((polyline) => polyline.setMap(null));
-    routeMarkers.forEach((marker) => marker.setMap(null));
-
-    routePolylines = [];
-    routeMarkers = [];
-
+  function updateRouteInfoEmpty() {
     routeInfo.innerHTML =
       `距離：未設定<br>` +
       `時間：未設定<br>` +
       `経由地：${getWaypointValues().length}か所`;
+  }
+
+  function clearDisplayedRoute(showMessage = true) {
+    if (directionsRenderer) {
+      directionsRenderer.setDirections({ routes: [] });
+    }
+
+    updateRouteInfoEmpty();
 
     if (showMessage) {
       showStatus("ルートを消去しました", true);
     }
-  }
-
-  function formatDistance(meters) {
-    if (!Number.isFinite(meters)) return "未取得";
-    return meters >= 1000
-      ? `${(meters / 1000).toFixed(1)} km`
-      : `${Math.round(meters)} m`;
-  }
-
-  function formatDuration(milliseconds) {
-    if (!Number.isFinite(milliseconds)) return "未取得";
-
-    const totalMinutes = Math.max(1, Math.round(milliseconds / 60000));
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-
-    if (hours === 0) return `${minutes}分`;
-    if (minutes === 0) return `${hours}時間`;
-    return `${hours}時間${minutes}分`;
   }
 
   function getCurrentLatLng() {
@@ -299,8 +283,50 @@
     showStatus("音声テストを再生しました", true);
   }
 
-  async function searchRoute() {
-    if (!map || !RouteClass) {
+  function sumRouteTotals(route) {
+    let totalDistance = 0;
+    let totalDuration = 0;
+
+    route.legs.forEach((leg) => {
+      totalDistance += leg.distance?.value || 0;
+      totalDuration += leg.duration_in_traffic?.value || leg.duration?.value || 0;
+    });
+
+    return { totalDistance, totalDuration };
+  }
+
+  function formatDistance(meters) {
+    return meters >= 1000
+      ? `${(meters / 1000).toFixed(1)} km`
+      : `${Math.round(meters)} m`;
+  }
+
+  function formatDuration(seconds) {
+    const totalMinutes = Math.max(1, Math.round(seconds / 60));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    if (hours === 0) return `${minutes}分`;
+    if (minutes === 0) return `${hours}時間`;
+    return `${hours}時間${minutes}分`;
+  }
+
+  function routeErrorMessage(status) {
+    const messages = {
+      ZERO_RESULTS: "指定した場所を通るルートが見つかりませんでした",
+      NOT_FOUND: "入力した場所の一部が見つかりませんでした",
+      MAX_WAYPOINTS_EXCEEDED: "経由地が多すぎます",
+      OVER_QUERY_LIMIT: "Googleマップの利用上限に達しました",
+      REQUEST_DENIED: "ルート検索が拒否されました。Directions API設定を確認してください",
+      INVALID_REQUEST: "出発地・経由地・目的地を確認してください",
+      UNKNOWN_ERROR: "一時的なエラーです。もう一度お試しください"
+    };
+
+    return messages[status] || `ルート検索に失敗しました（${status}）`;
+  }
+
+  function searchRoute() {
+    if (!map || !directionsService || !directionsRenderer) {
       showStatus("ルート機能を読み込み中です");
       return;
     }
@@ -309,7 +335,7 @@
 
     const originText = originInput.value.trim();
     const destinationText = destinationInput.value.trim();
-    const waypoints = getWaypointValues();
+    const waypointValues = getWaypointValues();
 
     if (!originText || !destinationText) {
       showStatus("出発地と目的地を入力してください");
@@ -327,110 +353,57 @@
       }
     }
 
+    const waypoints = waypointValues.map((location) => ({
+      location,
+      stopover: true
+    }));
+
+    const request = {
+      origin,
+      destination: destinationText,
+      waypoints,
+      optimizeWaypoints: false,
+      travelMode: google.maps.TravelMode.DRIVING,
+      drivingOptions: {
+        departureTime: new Date(),
+        trafficModel: google.maps.TrafficModel.BEST_GUESS
+      },
+      unitSystem: google.maps.UnitSystem.METRIC,
+      region: "JP"
+    };
+
     routeSearching = true;
     routeButton.disabled = true;
     routeButton.textContent = "検索中…";
+    showStatus("経由地を含むルートを検索しています…");
 
-    clearDisplayedRoute(false);
-    showStatus("ルートを検索しています…");
-
-    try {
-      const request = {
-        origin,
-        destination: destinationText,
-        travelMode: "DRIVING",
-        routingPreference: "TRAFFIC_AWARE",
-        departureTime: new Date(),
-        language: "ja",
-        units: google.maps.UnitSystem.METRIC,
-        fields: [
-          "path",
-          "viewport",
-          "distanceMeters",
-          "durationMillis",
-          "localizedValues"
-        ]
-      };
-
-      if (waypoints.length > 0) {
-        request.intermediates = waypoints.map((location) => ({ location }));
-      }
-
-      const result = await RouteClass.computeRoutes(request);
-      const route = result.routes?.[0];
-
-      if (!route) {
-        throw new Error("ZERO_RESULTS");
-      }
-
-      routePolylines = route.createPolylines({
-        strokeColor: "#1a73e8",
-        strokeOpacity: 0.95,
-        strokeWeight: 7
-      });
-
-      routePolylines.forEach((polyline) => polyline.setMap(map));
-
-      if (route.path?.length) {
-        routeMarkers.push(
-          new google.maps.Marker({
-            map,
-            position: route.path[0],
-            label: "出",
-            title: "出発地"
-          })
-        );
-
-        routeMarkers.push(
-          new google.maps.Marker({
-            map,
-            position: route.path[route.path.length - 1],
-            label: "着",
-            title: "目的地"
-          })
-        );
-      }
-
-      if (route.viewport) {
-        map.fitBounds(route.viewport, 45);
-      }
-
-      const distance =
-        route.localizedValues?.distance ||
-        formatDistance(route.distanceMeters);
-
-      const duration =
-        route.localizedValues?.duration ||
-        formatDuration(route.durationMillis);
-
-      routeInfo.innerHTML =
-        `距離：${distance}<br>` +
-        `時間：${duration}<br>` +
-        `経由地：${waypoints.length}か所`;
-
-      closePanel();
-      showStatus("ルートを表示しました", true);
-    } catch (error) {
-      console.error("Route error:", error);
-      clearDisplayedRoute(false);
-
-      const message = String(error?.message || error);
-
-      if (message.includes("ZERO_RESULTS")) {
-        showStatus("指定した場所を通るルートが見つかりませんでした");
-      } else if (message.includes("NOT_FOUND")) {
-        showStatus("入力した場所の一部が見つかりませんでした");
-      } else {
-        showStatus("ルート検索に失敗しました");
-      }
-    } finally {
+    directionsService.route(request, (result, status) => {
       routeSearching = false;
       routeButton.disabled = false;
       routeButton.textContent = "🧭 ルートを表示";
-    }
+
+      if (status !== "OK" || !result?.routes?.length) {
+        console.error("Directions route error:", status, result);
+        showStatus(routeErrorMessage(status));
+        return;
+      }
+
+      directionsRenderer.setDirections(result);
+
+      const route = result.routes[0];
+      const totals = sumRouteTotals(route);
+
+      routeInfo.innerHTML =
+        `距離：${formatDistance(totals.totalDistance)}<br>` +
+        `時間：${formatDuration(totals.totalDuration)}<br>` +
+        `経由地：${waypointValues.length}か所`;
+
+      closePanel();
+      showStatus("経由地付きルートを表示しました", true);
+    });
   }
 
-  async function initMap() {
+  function initMap() {
     try {
       map = new google.maps.Map($("map"), {
         center: DEFAULT_CENTER,
@@ -441,12 +414,22 @@
         gestureHandling: "greedy"
       });
 
+      directionsService = new google.maps.DirectionsService();
+
+      directionsRenderer = new google.maps.DirectionsRenderer({
+        map,
+        suppressMarkers: false,
+        preserveViewport: false,
+        polylineOptions: {
+          strokeColor: "#1a73e8",
+          strokeOpacity: 0.95,
+          strokeWeight: 7
+        }
+      });
+
       trafficLayer = new google.maps.TrafficLayer();
 
-      const routesLibrary = await google.maps.importLibrary("routes");
-      RouteClass = routesLibrary.Route;
-
-      showStatus("Ride Navi 2.2を読み込みました", true);
+      showStatus("Ride Navi 2.2 修正版を読み込みました", true);
       startGps();
     } catch (error) {
       console.error("Map initialization error:", error);
@@ -504,5 +487,6 @@
   });
 
   updateWaypointDisplay();
+  updateRouteInfoEmpty();
   loadGoogleMaps();
 })();
