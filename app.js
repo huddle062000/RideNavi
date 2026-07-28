@@ -24,6 +24,10 @@
   let navigationButton = null;
   let navigationActive = false;
   let lastRouteResult = null;
+  let navigationSteps = [];
+  let currentNavigationStepIndex = 0;
+  let announced300m = false;
+  let announced80m = false;
   const clearRouteButton = $("clearRouteButton");
   const locationButton = $("locationButton");
   const floatingLocationButton = $("floatingLocationButton");
@@ -148,6 +152,10 @@
   function clearDisplayedRoute(showMessage = true) {
     if (navigationActive) stopNavigation();
     lastRouteResult = null;
+    navigationSteps = [];
+    currentNavigationStepIndex = 0;
+    announced300m = false;
+    announced80m = false;
     if (navigationButton) navigationButton.disabled = true;
     if (directionsRenderer) {
       directionsRenderer.setDirections({ routes: [] });
@@ -202,6 +210,10 @@
     if (followToggle.checked || navigationActive) {
       map.panTo(point);
       if (navigationActive && map.getZoom() < 16) map.setZoom(16);
+    }
+
+    if (navigationActive) {
+      updateVoiceNavigation(point);
     }
 
     gpsInfo.innerHTML =
@@ -334,6 +346,121 @@
     return messages[status] || `ルート検索に失敗しました（${status}）`;
   }
 
+  function stripHtmlInstruction(html) {
+    const temporary = document.createElement("div");
+    temporary.innerHTML = html || "";
+    return temporary.textContent
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function normalizeInstruction(instruction) {
+    return instruction
+      .replace(/右方向へ進む/g, "右方向です")
+      .replace(/左方向へ進む/g, "左方向です")
+      .replace(/右折する/g, "右折です")
+      .replace(/左折する/g, "左折です")
+      .replace(/直進する/g, "直進です")
+      .replace(/目的地は/g, "目的地は")
+      .trim();
+  }
+
+  function buildNavigationSteps(result) {
+    const steps = [];
+
+    result.routes[0].legs.forEach((leg) => {
+      leg.steps.forEach((step) => {
+        const instruction = normalizeInstruction(
+          stripHtmlInstruction(step.instructions)
+        );
+
+        if (!instruction || !step.end_location) return;
+
+        steps.push({
+          instruction,
+          endLocation: {
+            lat: step.end_location.lat(),
+            lng: step.end_location.lng()
+          },
+          distanceMeters: step.distance?.value || 0
+        });
+      });
+    });
+
+    navigationSteps = steps;
+    currentNavigationStepIndex = 0;
+    announced300m = false;
+    announced80m = false;
+  }
+
+  function distanceBetweenMeters(a, b) {
+    const earthRadius = 6371000;
+    const toRadians = (degrees) => degrees * Math.PI / 180;
+
+    const lat1 = toRadians(a.lat);
+    const lat2 = toRadians(b.lat);
+    const deltaLat = toRadians(b.lat - a.lat);
+    const deltaLng = toRadians(b.lng - a.lng);
+
+    const value =
+      Math.sin(deltaLat / 2) ** 2 +
+      Math.cos(lat1) * Math.cos(lat2) *
+      Math.sin(deltaLng / 2) ** 2;
+
+    return earthRadius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+  }
+
+  function navigationDistanceText(distance) {
+    if (distance >= 1000) {
+      return `${(distance / 1000).toFixed(1)}キロメートル先`;
+    }
+
+    const rounded = Math.max(10, Math.round(distance / 10) * 10);
+    return `${rounded}メートル先`;
+  }
+
+  function updateVoiceNavigation(point) {
+    if (!navigationActive || !navigationSteps.length) return;
+
+    const step = navigationSteps[currentNavigationStepIndex];
+    if (!step) {
+      speakNavigation("目的地周辺です。お疲れさまでした。");
+      stopNavigation(false);
+      return;
+    }
+
+    const distance = distanceBetweenMeters(point, step.endLocation);
+
+    if (distance <= 35) {
+      currentNavigationStepIndex += 1;
+      announced300m = false;
+      announced80m = false;
+
+      const nextStep = navigationSteps[currentNavigationStepIndex];
+      if (!nextStep) {
+        speakNavigation("目的地周辺です。お疲れさまでした。");
+        stopNavigation(false);
+        return;
+      }
+
+      showStatus(`次の案内：${nextStep.instruction}`, true);
+      return;
+    }
+
+    if (distance <= 80 && !announced80m) {
+      announced80m = true;
+      speakNavigation(`まもなく、${step.instruction}`);
+      showStatus(`まもなく：${step.instruction}`, true);
+      return;
+    }
+
+    if (distance <= 300 && !announced300m) {
+      announced300m = true;
+      speakNavigation(`${navigationDistanceText(distance)}、${step.instruction}`);
+      showStatus(`${navigationDistanceText(distance)}：${step.instruction}`, true);
+    }
+  }
+
   function createNavigationButton() {
     if (!routeButton || navigationButton) return;
 
@@ -370,6 +497,14 @@
       return;
     }
 
+    if (!navigationSteps.length) {
+      showStatus("音声案内データを準備できませんでした");
+      return;
+    }
+
+    currentNavigationStepIndex = 0;
+    announced300m = false;
+    announced80m = false;
     navigationActive = true;
     navigationButton.textContent = "■ ナビ終了";
     followToggle.checked = true;
@@ -377,16 +512,24 @@
     map.setZoom(16);
     closePanel();
 
-    showStatus("ナビを開始しました", true);
-    speakNavigation("ナビを開始します。安全運転で走行してください。");
+    const firstInstruction = navigationSteps[0]?.instruction;
+    showStatus(
+      firstInstruction ? `ナビ開始：${firstInstruction}` : "ナビを開始しました",
+      true
+    );
+    speakNavigation(
+      firstInstruction
+        ? `ナビを開始します。最初の案内は、${firstInstruction}`
+        : "ナビを開始します。安全運転で走行してください。"
+    );
   }
 
-  function stopNavigation() {
+  function stopNavigation(speak = true) {
     navigationActive = false;
     navigationButton.textContent = "▶ ナビ開始";
 
     showStatus("ナビを終了しました", true);
-    speakNavigation("ナビを終了しました。");
+    if (speak) speakNavigation("ナビを終了しました。");
   }
 
   function toggleNavigation() {
@@ -555,7 +698,8 @@
 
       directionsRenderer.setDirections(result);
       lastRouteResult = result;
-      if (navigationButton) navigationButton.disabled = false;
+      buildNavigationSteps(result);
+      if (navigationButton) navigationButton.disabled = navigationSteps.length === 0;
 
       const route = result.routes[0];
       const totals = sumRouteTotals(route);
@@ -596,7 +740,7 @@
 
       trafficLayer = new google.maps.TrafficLayer();
 
-      showStatus("Ride Navi 2.4 ナビ開始版を読み込みました", true);
+      showStatus("Ride Navi 2.5 交差点音声案内版を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
