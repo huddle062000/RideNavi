@@ -209,7 +209,6 @@
 
     if (followToggle.checked || navigationActive) {
       map.panTo(point);
-      if (navigationActive && map.getZoom() < 16) map.setZoom(16);
     }
 
     if (navigationActive) {
@@ -509,7 +508,6 @@
     navigationButton.textContent = "■ ナビ終了";
     followToggle.checked = true;
     map.panTo(point);
-    map.setZoom(16);
     closePanel();
 
     const firstInstruction = navigationSteps[0]?.instruction;
@@ -714,6 +712,87 @@
     });
   }
 
+  function createZoomButtons() {
+    if (document.getElementById("rideNaviZoomControls")) return;
+
+    const style = document.createElement("style");
+    style.textContent = `
+      #rideNaviZoomControls {
+        position: fixed;
+        right: 74px;
+        bottom: calc(18px + env(safe-area-inset-bottom));
+        z-index: 1000;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      #rideNaviZoomControls button {
+        width: 46px;
+        height: 46px;
+        border: 1px solid rgba(0, 0, 0, 0.18);
+        border-radius: 50%;
+        background: #ffffff;
+        color: #202124;
+        box-shadow: 0 2px 7px rgba(0, 0, 0, 0.28);
+        font-size: 28px;
+        font-weight: 500;
+        line-height: 1;
+        cursor: pointer;
+        touch-action: manipulation;
+        user-select: none;
+      }
+
+      #rideNaviZoomControls button:active {
+        transform: scale(0.94);
+      }
+
+      @media (max-width: 480px) {
+        #rideNaviZoomControls {
+          right: 70px;
+          gap: 6px;
+        }
+
+        #rideNaviZoomControls button {
+          width: 44px;
+          height: 44px;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+
+    const controls = document.createElement("div");
+    controls.id = "rideNaviZoomControls";
+    controls.setAttribute("aria-label", "地図の拡大縮小");
+
+    const zoomOutButton = document.createElement("button");
+    zoomOutButton.type = "button";
+    zoomOutButton.textContent = "−";
+    zoomOutButton.title = "地図を縮小";
+    zoomOutButton.setAttribute("aria-label", "地図を縮小");
+
+    const zoomInButton = document.createElement("button");
+    zoomInButton.type = "button";
+    zoomInButton.textContent = "＋";
+    zoomInButton.title = "地図を拡大";
+    zoomInButton.setAttribute("aria-label", "地図を拡大");
+
+    zoomOutButton.addEventListener("click", () => {
+      if (!map) return;
+      map.setZoom(Math.max(2, (map.getZoom() || 12) - 1));
+      showStatus("地図を縮小しました", true);
+    });
+
+    zoomInButton.addEventListener("click", () => {
+      if (!map) return;
+      map.setZoom(Math.min(21, (map.getZoom() || 12) + 1));
+      showStatus("地図を拡大しました", true);
+    });
+
+    controls.append(zoomOutButton, zoomInButton);
+    document.body.appendChild(controls);
+  }
+
   function initMap() {
     try {
       map = new google.maps.Map($("map"), {
@@ -739,8 +818,9 @@
       });
 
       trafficLayer = new google.maps.TrafficLayer();
+      createZoomButtons();
 
-      showStatus("Ride Navi 2.5 交差点音声案内版を読み込みました", true);
+      showStatus("Ride Navi 2.6 手動ズーム版を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
