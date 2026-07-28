@@ -32,6 +32,9 @@
   let offRouteCount = 0;
   let rerouteInProgress = false;
   let lastRerouteTime = 0;
+  let headingUpEnabled = false;
+  let headingButton = null;
+  let lastKnownHeading = null;
 
   const OFF_ROUTE_DISTANCE_METERS = 80;
   const OFF_ROUTE_REQUIRED_COUNT = 3;
@@ -194,6 +197,13 @@
     const point = getCurrentLatLng();
     const accuracy = Math.round(position.coords.accuracy || 0);
 
+    if (
+      Number.isFinite(position.coords.heading) &&
+      position.coords.heading >= 0
+    ) {
+      lastKnownHeading = position.coords.heading;
+    }
+
     if (!userMarker) {
       userMarker = new google.maps.Marker({
         map,
@@ -220,6 +230,10 @@
 
     if (followToggle.checked || navigationActive) {
       map.panTo(point);
+    }
+
+    if (headingUpEnabled && Number.isFinite(lastKnownHeading)) {
+      map.setHeading(lastKnownHeading);
     }
 
     if (navigationActive) {
@@ -939,6 +953,11 @@
         transform: scale(0.94);
       }
 
+      #rideNaviZoomControls button.active {
+        background: #1a73e8;
+        color: #ffffff;
+      }
+
       @media (max-width: 480px) {
         #rideNaviZoomControls {
           right: 70px;
@@ -969,6 +988,13 @@
     zoomInButton.title = "地図を拡大";
     zoomInButton.setAttribute("aria-label", "地図を拡大");
 
+    headingButton = document.createElement("button");
+    headingButton.type = "button";
+    headingButton.textContent = "🧭";
+    headingButton.title = "進行方向を上に表示";
+    headingButton.setAttribute("aria-label", "進行方向を上に表示");
+    headingButton.setAttribute("aria-pressed", "false");
+
     zoomOutButton.addEventListener("click", () => {
       if (!map) return;
       map.setZoom(Math.max(2, (map.getZoom() || 12) - 1));
@@ -981,7 +1007,36 @@
       showStatus("地図を拡大しました", true);
     });
 
-    controls.append(zoomOutButton, zoomInButton);
+    headingButton.addEventListener("click", () => {
+      if (!map) return;
+
+      headingUpEnabled = !headingUpEnabled;
+      headingButton.setAttribute(
+        "aria-pressed",
+        headingUpEnabled ? "true" : "false"
+      );
+
+      if (headingUpEnabled) {
+        headingButton.classList.add("active");
+        headingButton.title = "北を上に固定";
+        headingButton.setAttribute("aria-label", "北を上に固定");
+
+        if (Number.isFinite(lastKnownHeading)) {
+          map.setHeading(lastKnownHeading);
+          showStatus("進行方向を上に表示します", true);
+        } else {
+          showStatus("移動すると進行方向を上に表示します", true);
+        }
+      } else {
+        headingButton.classList.remove("active");
+        headingButton.title = "進行方向を上に表示";
+        headingButton.setAttribute("aria-label", "進行方向を上に表示");
+        map.setHeading(0);
+        showStatus("北を上に固定しました", true);
+      }
+    });
+
+    controls.append(zoomOutButton, zoomInButton, headingButton);
     document.body.appendChild(controls);
   }
 
@@ -993,7 +1048,12 @@
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
-        gestureHandling: "greedy"
+        gestureHandling: "greedy",
+        renderingType: google.maps.RenderingType.VECTOR,
+        tilt: 0,
+        heading: 0,
+        headingInteractionEnabled: false,
+        tiltInteractionEnabled: false
       });
 
       directionsService = new google.maps.DirectionsService();
@@ -1012,7 +1072,7 @@
       trafficLayer = new google.maps.TrafficLayer();
       createZoomButtons();
 
-      showStatus("Ride Navi 2.7 自動リルート版を読み込みました", true);
+      showStatus("Ride Navi 2.8 方位切替版を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
