@@ -28,6 +28,14 @@
   let currentNavigationStepIndex = 0;
   let announced300m = false;
   let announced80m = false;
+  let routePathPoints = [];
+  let offRouteCount = 0;
+  let rerouteInProgress = false;
+  let lastRerouteTime = 0;
+
+  const OFF_ROUTE_DISTANCE_METERS = 80;
+  const OFF_ROUTE_REQUIRED_COUNT = 3;
+  const REROUTE_COOLDOWN_MS = 20000;
   const clearRouteButton = $("clearRouteButton");
   const locationButton = $("locationButton");
   const floatingLocationButton = $("floatingLocationButton");
@@ -156,6 +164,9 @@
     currentNavigationStepIndex = 0;
     announced300m = false;
     announced80m = false;
+    routePathPoints = [];
+    offRouteCount = 0;
+    rerouteInProgress = false;
     if (navigationButton) navigationButton.disabled = true;
     if (directionsRenderer) {
       directionsRenderer.setDirections({ routes: [] });
@@ -213,6 +224,7 @@
 
     if (navigationActive) {
       updateVoiceNavigation(point);
+      checkAutomaticReroute(point, accuracy);
     }
 
     gpsInfo.innerHTML =
@@ -367,7 +379,7 @@
   function buildNavigationSteps(result) {
     const steps = [];
 
-    result.routes[0].legs.forEach((leg) => {
+    result.routes[0].legs.forEach((leg, legIndex) => {
       leg.steps.forEach((step) => {
         const instruction = normalizeInstruction(
           stripHtmlInstruction(step.instructions)
@@ -381,7 +393,8 @@
             lat: step.end_location.lat(),
             lng: step.end_location.lng()
           },
-          distanceMeters: step.distance?.value || 0
+          distanceMeters: step.distance?.value || 0,
+          legIndex
         });
       });
     });
@@ -460,6 +473,180 @@
     }
   }
 
+  function updateRoutePath(result) {
+    const overviewPath = result?.routes?.[0]?.overview_path || [];
+
+    routePathPoints = overviewPath.map((point) => ({
+      lat: point.lat(),
+      lng: point.lng()
+    }));
+
+    offRouteCount = 0;
+  }
+
+  function distancePointToSegmentMeters(point, segmentStart, segmentEnd) {
+    const earthRadius = 6371000;
+    const meanLatitude =
+      ((point.lat + segmentStart.lat + segmentEnd.lat) / 3) * Math.PI / 180;
+
+    const toXY = (coordinate) => ({
+      x: coordinate.lng * Math.PI / 180 * earthRadius * Math.cos(meanLatitude),
+      y: coordinate.lat * Math.PI / 180 * earthRadius
+    });
+
+    const p = toXY(point);
+    const a = toXY(segmentStart);
+    const b = toXY(segmentEnd);
+    const abX = b.x - a.x;
+    const abY = b.y - a.y;
+    const lengthSquared = abX * abX + abY * abY;
+
+    if (lengthSquared === 0) {
+      return Math.hypot(p.x - a.x, p.y - a.y);
+    }
+
+    const projection = Math.max(
+      0,
+      Math.min(
+        1,
+        ((p.x - a.x) * abX + (p.y - a.y) * abY) / lengthSquared
+      )
+    );
+
+    const nearestX = a.x + projection * abX;
+    const nearestY = a.y + projection * abY;
+
+    return Math.hypot(p.x - nearestX, p.y - nearestY);
+  }
+
+  function distanceFromRouteMeters(point) {
+    if (routePathPoints.length < 2) return Infinity;
+
+    let minimumDistance = Infinity;
+
+    for (let index = 0; index < routePathPoints.length - 1; index += 1) {
+      const distance = distancePointToSegmentMeters(
+        point,
+        routePathPoints[index],
+        routePathPoints[index + 1]
+      );
+
+      if (distance < minimumDistance) {
+        minimumDistance = distance;
+      }
+    }
+
+    return minimumDistance;
+  }
+
+  function currentLegIndex() {
+    return navigationSteps[currentNavigationStepIndex]?.legIndex || 0;
+  }
+
+  function remainingWaypointValues() {
+    const allWaypoints = getWaypointValues();
+    return allWaypoints.slice(currentLegIndex());
+  }
+
+  function checkAutomaticReroute(point, accuracy) {
+    if (
+      !navigationActive ||
+      rerouteInProgress ||
+      routeSearching ||
+      routePathPoints.length < 2
+    ) {
+      return;
+    }
+
+    if (accuracy > 50) {
+      offRouteCount = 0;
+      return;
+    }
+
+    const distance = distanceFromRouteMeters(point);
+
+    if (distance <= OFF_ROUTE_DISTANCE_METERS) {
+      offRouteCount = 0;
+      return;
+    }
+
+    offRouteCount += 1;
+
+    if (offRouteCount < OFF_ROUTE_REQUIRED_COUNT) {
+      return;
+    }
+
+    const now = Date.now();
+
+    if (now - lastRerouteTime < REROUTE_COOLDOWN_MS) {
+      return;
+    }
+
+    offRouteCount = 0;
+    rerouteFromCurrentLocation(point);
+  }
+
+  function rerouteFromCurrentLocation(point) {
+    if (!directionsService || rerouteInProgress) return;
+
+    const destination = destinationInput.value.trim();
+
+    if (!destination) {
+      showStatus("目的地がないため再検索できません");
+      return;
+    }
+
+    const remainingWaypoints = remainingWaypointValues().map((location) => ({
+      location,
+      stopover: true
+    }));
+
+    const request = {
+      origin: point,
+      destination,
+      waypoints: remainingWaypoints,
+      optimizeWaypoints: false,
+      travelMode: google.maps.TravelMode.DRIVING,
+      drivingOptions: {
+        departureTime: new Date(),
+        trafficModel: google.maps.TrafficModel.BEST_GUESS
+      },
+      unitSystem: google.maps.UnitSystem.METRIC,
+      region: "JP"
+    };
+
+    rerouteInProgress = true;
+    lastRerouteTime = Date.now();
+    showStatus("ルートから外れました。再検索しています…");
+    speakNavigation("ルートを再検索します。");
+
+    directionsService.route(request, (result, status) => {
+      rerouteInProgress = false;
+
+      if (status !== "OK" || !result?.routes?.length) {
+        console.error("Automatic reroute error:", status, result);
+        showStatus("自動リルートに失敗しました");
+        return;
+      }
+
+      directionsRenderer.setDirections(result);
+      lastRouteResult = result;
+      buildNavigationSteps(result);
+      updateRoutePath(result);
+
+      const route = result.routes[0];
+      const totals = sumRouteTotals(route);
+
+      routeInfo.innerHTML =
+        `距離：${formatDistance(totals.totalDistance)}<br>` +
+        `時間：${formatDuration(totals.totalDuration)}<br>` +
+        `残り経由地：${remainingWaypoints.length}か所`;
+
+      showStatus("新しいルートに切り替えました", true);
+      speakNavigation("新しいルートに切り替えました。");
+    });
+  }
+
   function createNavigationButton() {
     if (!routeButton || navigationButton) return;
 
@@ -504,6 +691,8 @@
     currentNavigationStepIndex = 0;
     announced300m = false;
     announced80m = false;
+    offRouteCount = 0;
+    rerouteInProgress = false;
     navigationActive = true;
     navigationButton.textContent = "■ ナビ終了";
     followToggle.checked = true;
@@ -524,6 +713,8 @@
 
   function stopNavigation(speak = true) {
     navigationActive = false;
+    offRouteCount = 0;
+    rerouteInProgress = false;
     navigationButton.textContent = "▶ ナビ開始";
 
     showStatus("ナビを終了しました", true);
@@ -697,6 +888,7 @@
       directionsRenderer.setDirections(result);
       lastRouteResult = result;
       buildNavigationSteps(result);
+      updateRoutePath(result);
       if (navigationButton) navigationButton.disabled = navigationSteps.length === 0;
 
       const route = result.routes[0];
@@ -820,7 +1012,7 @@
       trafficLayer = new google.maps.TrafficLayer();
       createZoomButtons();
 
-      showStatus("Ride Navi 2.6 手動ズーム版を読み込みました", true);
+      showStatus("Ride Navi 2.7 自動リルート版を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
