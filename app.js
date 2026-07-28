@@ -21,6 +21,9 @@
   const waypointCount = $("waypointCount");
   const routeButton = $("routeButton");
   let shareRouteButton = null;
+  let navigationButton = null;
+  let navigationActive = false;
+  let lastRouteResult = null;
   const clearRouteButton = $("clearRouteButton");
   const locationButton = $("locationButton");
   const floatingLocationButton = $("floatingLocationButton");
@@ -143,6 +146,9 @@
   }
 
   function clearDisplayedRoute(showMessage = true) {
+    if (navigationActive) stopNavigation();
+    lastRouteResult = null;
+    if (navigationButton) navigationButton.disabled = true;
     if (directionsRenderer) {
       directionsRenderer.setDirections({ routes: [] });
     }
@@ -193,8 +199,9 @@
       accuracyCircle.setRadius(accuracy);
     }
 
-    if (followToggle.checked) {
+    if (followToggle.checked || navigationActive) {
       map.panTo(point);
+      if (navigationActive && map.getZoom() < 16) map.setZoom(16);
     }
 
     gpsInfo.innerHTML =
@@ -325,6 +332,65 @@
     };
 
     return messages[status] || `ルート検索に失敗しました（${status}）`;
+  }
+
+  function createNavigationButton() {
+    if (!routeButton || navigationButton) return;
+
+    navigationButton = document.createElement("button");
+    navigationButton.id = "navigationButton";
+    navigationButton.type = "button";
+    navigationButton.className = "primary";
+    navigationButton.textContent = "▶ ナビ開始";
+    navigationButton.disabled = true;
+
+    routeButton.insertAdjacentElement("afterend", navigationButton);
+    navigationButton.addEventListener("click", toggleNavigation);
+  }
+
+  function speakNavigation(message) {
+    if (!("speechSynthesis" in window)) return;
+
+    speechSynthesis.cancel();
+    const speech = new SpeechSynthesisUtterance(message);
+    speech.lang = "ja-JP";
+    speech.rate = 1;
+    speechSynthesis.speak(speech);
+  }
+
+  function startNavigation() {
+    if (!lastRouteResult?.routes?.length) {
+      showStatus("先にルートを表示してください");
+      return;
+    }
+
+    const point = getCurrentLatLng();
+    if (!point) {
+      showStatus("現在地を取得してからナビを開始してください");
+      return;
+    }
+
+    navigationActive = true;
+    navigationButton.textContent = "■ ナビ終了";
+    followToggle.checked = true;
+    map.panTo(point);
+    map.setZoom(16);
+    closePanel();
+
+    showStatus("ナビを開始しました", true);
+    speakNavigation("ナビを開始します。安全運転で走行してください。");
+  }
+
+  function stopNavigation() {
+    navigationActive = false;
+    navigationButton.textContent = "▶ ナビ開始";
+
+    showStatus("ナビを終了しました", true);
+    speakNavigation("ナビを終了しました。");
+  }
+
+  function toggleNavigation() {
+    navigationActive ? stopNavigation() : startNavigation();
   }
 
   function createShareButton() {
@@ -488,6 +554,8 @@
       }
 
       directionsRenderer.setDirections(result);
+      lastRouteResult = result;
+      if (navigationButton) navigationButton.disabled = false;
 
       const route = result.routes[0];
       const totals = sumRouteTotals(route);
@@ -528,7 +596,7 @@
 
       trafficLayer = new google.maps.TrafficLayer();
 
-      showStatus("Ride Navi 2.3 URL共有版を読み込みました", true);
+      showStatus("Ride Navi 2.4 ナビ開始版を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
@@ -589,6 +657,7 @@
     if (event.key === "Enter") searchRoute();
   });
 
+  createNavigationButton();
   createShareButton();
   updateWaypointDisplay();
   updateRouteInfoEmpty();
