@@ -20,6 +20,7 @@
   const waypointList = $("waypointList");
   const waypointCount = $("waypointCount");
   const routeButton = $("routeButton");
+  let shareRouteButton = null;
   const clearRouteButton = $("clearRouteButton");
   const locationButton = $("locationButton");
   const floatingLocationButton = $("floatingLocationButton");
@@ -80,7 +81,7 @@
     addWaypointButton.disabled = rows.length >= MAX_WAYPOINTS;
   }
 
-  function addWaypoint() {
+  function addWaypoint(value = "") {
     const count = waypointList.querySelectorAll(".waypoint-row").length;
 
     if (count >= MAX_WAYPOINTS) {
@@ -98,6 +99,7 @@
     input.type = "text";
     input.className = "waypoint-input";
     input.autocomplete = "off";
+    input.value = value;
 
     const removeButton = document.createElement("button");
     removeButton.type = "button";
@@ -325,6 +327,103 @@
     return messages[status] || `ルート検索に失敗しました（${status}）`;
   }
 
+  function createShareButton() {
+    if (!routeButton || shareRouteButton) return;
+
+    shareRouteButton = document.createElement("button");
+    shareRouteButton.id = "shareRouteButton";
+    shareRouteButton.type = "button";
+    shareRouteButton.className = "secondary";
+    shareRouteButton.textContent = "🔗 ルートURLを共有";
+
+    routeButton.insertAdjacentElement("afterend", shareRouteButton);
+    shareRouteButton.addEventListener("click", shareRouteUrl);
+  }
+
+  function buildShareUrl() {
+    const originText = originInput.value.trim();
+    const destinationText = destinationInput.value.trim();
+    const waypoints = getWaypointValues();
+
+    if (!originText || !destinationText) {
+      throw new Error("出発地と目的地を入力してください");
+    }
+
+    let sharedOrigin = originText;
+
+    if (originText === "現在地") {
+      const point = getCurrentLatLng();
+
+      if (!point) {
+        throw new Error("現在地を取得してから共有してください");
+      }
+
+      sharedOrigin = `${point.lat},${point.lng}`;
+    }
+
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.hash = "";
+
+    url.searchParams.set("o", sharedOrigin);
+    url.searchParams.set("d", destinationText);
+
+    waypoints.forEach((waypoint) => {
+      url.searchParams.append("w", waypoint);
+    });
+
+    url.searchParams.set("shared", "1");
+    return url.toString();
+  }
+
+  async function shareRouteUrl() {
+    try {
+      const shareUrl = buildShareUrl();
+
+      if (navigator.share) {
+        await navigator.share({
+          title: "Ride Navi ルート",
+          text: "Ride Naviで作成したツーリングルートです。",
+          url: shareUrl
+        });
+        showStatus("共有画面を開きました", true);
+        return;
+      }
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        showStatus("ルートURLをコピーしました", true);
+        return;
+      }
+
+      window.prompt("このURLをコピーしてください", shareUrl);
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      showStatus(error?.message || "URLを共有できませんでした");
+    }
+  }
+
+  function loadRouteFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const origin = params.get("o");
+    const destination = params.get("d");
+    const waypoints = params.getAll("w").slice(0, MAX_WAYPOINTS);
+
+    if (!origin || !destination) return false;
+
+    originInput.value = origin;
+    destinationInput.value = destination;
+    waypointList.innerHTML = "";
+
+    waypoints.forEach((waypoint) => addWaypoint(waypoint));
+
+    updateWaypointDisplay();
+    updateRouteInfoEmpty();
+    openPanel();
+    showStatus("共有されたルートを読み込みました", true);
+    return true;
+  }
+
   function searchRoute() {
     if (!map || !directionsService || !directionsRenderer) {
       showStatus("ルート機能を読み込み中です");
@@ -429,8 +528,12 @@
 
       trafficLayer = new google.maps.TrafficLayer();
 
-      showStatus("Ride Navi 2.2 修正版を読み込みました", true);
+      showStatus("Ride Navi 2.3 URL共有版を読み込みました", true);
       startGps();
+
+      if (new URLSearchParams(window.location.search).get("shared") === "1") {
+        setTimeout(searchRoute, 500);
+      }
     } catch (error) {
       console.error("Map initialization error:", error);
       showStatus("地図の初期化に失敗しました");
@@ -486,7 +589,9 @@
     if (event.key === "Enter") searchRoute();
   });
 
+  createShareButton();
   updateWaypointDisplay();
   updateRouteInfoEmpty();
+  loadRouteFromUrl();
   loadGoogleMaps();
 })();
