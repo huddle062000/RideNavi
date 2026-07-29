@@ -373,7 +373,7 @@ function showRouteChoices(candidates) {
       showStatus("ルートを消去しました", true);
     }
   
-
+ }
   function getCurrentLatLng() {
     if (!currentPosition) return null;
 
