@@ -636,8 +636,8 @@
 
     rerouteInProgress = true;
     lastRerouteTime = Date.now();
-    showStatus("ルートから外れました。再検索しています…");
-    speakNavigation("ルートを再検索します。");
+ showStatus("🔄 新しいルートを探しています…");
+speakNavigation("新しいルートを検索します。");
 
     directionsService.route(request, (result, status) => {
       rerouteInProgress = false;
