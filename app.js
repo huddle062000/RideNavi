@@ -1476,6 +1476,15 @@ function showRouteChoices(candidates) {
         tiltInteractionEnabled: false
       });
 
+    map.addListener("dragstart", () => {
+      if (!followToggle) return;
+
+      followToggle.checked = false;
+      showStatus("地図の自動追従を解除しました", true);
+    });
+
+  
+
       directionsService = new google.maps.DirectionsService();
 
       directionsRenderer = new google.maps.DirectionsRenderer({
