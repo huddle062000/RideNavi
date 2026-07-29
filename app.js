@@ -108,7 +108,76 @@
     if (!path.length) return null;
     return path[Math.floor(path.length / 2)];
   }
+function createRouteLabelOverlay(position, text, isSelected, onClick) {
+  class RouteLabelOverlay extends google.maps.OverlayView {
+    constructor() {
+      super();
+      this.position = position;
+      this.text = text;
+      this.isSelected = isSelected;
+      this.onClick = onClick;
+      this.element = null;
+    }
 
+    onAdd() {
+      const button = document.createElement("button");
+
+      button.type = "button";
+      button.textContent = this.text;
+
+      Object.assign(button.style, {
+        position: "absolute",
+        transform: "translate(-50%, -50%)",
+        padding: this.isSelected ? "8px 12px" : "6px 10px",
+        border: this.isSelected
+          ? "2px solid #1a73e8"
+          : "1px solid #dadce0",
+        borderRadius: "18px",
+        background: "#ffffff",
+        color: this.isSelected ? "#174ea6" : "#3c4043",
+        boxShadow: "0 2px 6px rgba(0, 0, 0, 0.25)",
+        fontSize: this.isSelected ? "14px" : "12px",
+        fontWeight: "700",
+        whiteSpace: "nowrap",
+        cursor: "pointer",
+        zIndex: this.isSelected ? "100" : "50"
+      });
+
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.onClick();
+      });
+
+      this.element = button;
+      this.getPanes().floatPane.appendChild(button);
+
+      if (google.maps.OverlayView.preventMapHitsAndGesturesFrom) {
+        google.maps.OverlayView.preventMapHitsAndGesturesFrom(button);
+      }
+    }
+
+    draw() {
+      if (!this.element) return;
+
+      const projection = this.getProjection();
+      const point = projection.fromLatLngToDivPixel(this.position);
+
+      if (!point) return;
+
+      this.element.style.left = `${point.x}px`;
+      this.element.style.top = `${point.y}px`;
+    }
+
+    onRemove() {
+      this.element?.remove();
+      this.element = null;
+    }
+  }
+
+  const overlay = new RouteLabelOverlay();
+  overlay.setMap(map);
+  return overlay;
+}
   function drawRouteOverlays() {
     clearRouteOverlays();
 
@@ -119,11 +188,11 @@
       const polyline = new google.maps.Polyline({
         map,
         path: route.overview_path,
-        strokeColor: isSelected ? "#1a73e8" : "#6f8fcf",
-        strokeOpacity: isSelected ? 1 : 0.7,
-        strokeWeight: isSelected ? 8 : 5,
-        zIndex: isSelected ? 50 : 20 + index,
-        clickable: true
+      strokeColor: isSelected ? "#1a73e8" : "#9aa0a6",
+strokeOpacity: isSelected ? 1 : 0.85,
+strokeWeight: isSelected ? 8 : 6,
+zIndex: isSelected ? 100 : 10 + index,
+clickable: true
       });
 
       polyline.addListener("click", () => {
@@ -136,30 +205,17 @@
       if (!midpoint) return;
 
       const totals = sumRouteTotals(route);
-      const marker = new google.maps.Marker({
-        map,
-        position: midpoint,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 0
-        },
-        label: {
-          text: `${formatDuration(totals.totalDuration)}・${formatDistance(totals.totalDistance)}`,
-          color: isSelected ? "#174ea6" : "#4d5156",
-          fontSize: isSelected ? "14px" : "12px",
-          fontWeight: "700"
-        },
-        zIndex: isSelected ? 70 : 40 + index,
-        clickable: true
-      });
+const labelOverlay = createRouteLabelOverlay(
+    midpoint,
+    `${formatDuration(totals.totalDuration)}・${formatDistance(totals.totalDistance)}`,
+    isSelected,
+    () => applyRouteCandidate(index)
+);
 
-      marker.addListener("click", () => {
-        applyRouteCandidate(index);
-      });
-
-      routeLabelMarkers.push(marker);
-    });
-  }
+routeLabelMarkers.push(labelOverlay);
+  
+ });
+ }
 
   function routeModeLabel(mode) {
     const labels = {
@@ -486,7 +542,7 @@ function showRouteChoices(candidates) {
       showStatus("現在地を取得しています");
       return;
     }
-
+followToggle.checked = true;
     map.panTo(point);
     map.setZoom(16);
   }
