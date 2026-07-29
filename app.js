@@ -1232,11 +1232,20 @@ speakNavigation("新しいルートを検索します。");
         }
       });
 
-      trafficLayer = new google.maps.TrafficLayer();
-      createNavigationInfoPanel();
-      createZoomButtons();
+map.addListener("click", (event) => {
+  if (!event.latLng) return;
 
-      showStatus("Ride Navi 2.10 透明縦型ナビ情報版を読み込みました", true);
+  const lat = event.latLng.lat().toFixed(6);
+  const lng = event.latLng.lng().toFixed(6);
+
+  destinationInput.value = `${lat},${lng}`;
+  showStatus("📍 タップした場所を目的地に設定しました", true);
+});
+      trafficLayer = new google.maps.TrafficLayer();
+createNavigationInfoPanel();
+createZoomButtons();
+
+showStatus("Ride Navi 2.10 透明縦型ナビ情報版を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
