@@ -58,6 +58,7 @@
   let trafficLayer = null;
   let currentPosition = null;
   let userMarker = null;
+  let destinationMarker = null;
   let accuracyCircle = null;
   let statusTimer = null;
   let routeSearching = false;
@@ -1243,7 +1244,16 @@ map.addListener("click", (event) => {
   );
 
   if (!useAsDestination) return;
-
+if (!destinationMarker) {
+  destinationMarker = new google.maps.Marker({
+    map: map,
+    position: event.latLng,
+    title: "目的地",
+    animation: google.maps.Animation.DROP
+  });
+} else {
+  destinationMarker.setPosition(event.latLng);
+}
   destinationInput.value = `${lat},${lng}`;
   showStatus("📍 目的地に設定しました。ルートを検索します…");
 
