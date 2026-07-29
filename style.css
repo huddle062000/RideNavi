@@ -116,3 +116,31 @@ button:disabled{cursor:default;opacity:.55}
     grid-template-columns:1fr;
   }
 }
+.route-choice-panel{
+  left:10px;
+  right:10px;
+  bottom:calc(78px + env(safe-area-inset-bottom));
+  transform:none;
+  width:auto;
+  max-height:none;
+  overflow:visible;
+  padding:10px;
+}
+
+.route-choice-list{
+  display:flex;
+  gap:8px;
+  overflow-x:auto;
+  scroll-snap-type:x mandatory;
+  padding-bottom:4px;
+}
+
+.route-choice-card{
+  flex:0 0 78%;
+  min-width:250px;
+  scroll-snap-align:start;
+}
+
+.route-choice-note{
+  display:none;
+}
