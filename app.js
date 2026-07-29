@@ -860,6 +860,7 @@ speakNavigation("新しいルートを検索します。");
     const destinationText = destinationInput.value.trim();
     const waypointValues = getWaypointValues();
 
+    const routeMode = document.getElementById("routeMode").value;
     if (!originText || !destinationText) {
       showStatus("出発地と目的地を入力してください");
       return;
@@ -892,6 +893,9 @@ speakNavigation("新しいルートを検索します。");
         trafficModel: google.maps.TrafficModel.BEST_GUESS
       },
       unitSystem: google.maps.UnitSystem.METRIC,
+      avoidHighways: routeMode === "local",
+avoidTolls: routeMode === "local",
+provideRouteAlternatives: true,
       region: "JP"
     };
 
