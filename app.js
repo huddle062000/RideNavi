@@ -233,9 +233,9 @@
       accuracyCircle.setRadius(accuracy);
     }
 
-    if (followToggle.checked || navigationActive) {
-      map.panTo(point);
-    }
+if (followToggle.checked) {
+  map.panTo(point);
+}
 
     if (headingUpEnabled && Number.isFinite(lastKnownHeading)) {
       map.setHeading(lastKnownHeading);
