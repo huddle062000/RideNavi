@@ -82,6 +82,12 @@ let selectedRouteIndex = 0;
       }, 2600);
     }
   }
+  function hideRouteChoices() {
+  if (routeChoicePanel) {
+    routeChoicePanel.remove();
+    routeChoicePanel = null;
+  }
+}
 
   function openPanel() {
     controlPanel?.classList.remove("is-hidden");
