@@ -178,44 +178,60 @@ function createRouteLabelOverlay(position, text, isSelected, onClick) {
   overlay.setMap(map);
   return overlay;
 }
-  function drawRouteOverlays() {
-    clearRouteOverlays();
+function drawRouteOverlays() {
+  clearRouteOverlays();
 
-    routeCandidates.forEach((candidate, index) => {
-      const route = candidate.result.routes[candidate.routeIndex];
-      const isSelected = index === selectedRouteIndex;
+  routeCandidates.forEach((candidate, index) => {
+    const route = candidate.result.routes[candidate.routeIndex];
+    const isSelected = index === selectedRouteIndex;
 
-      const polyline = new google.maps.Polyline({
-        map,
-        path: route.overview_path,
-      strokeColor: isSelected ? "#1a73e8" : "#9aa0a6",
-strokeOpacity: isSelected ? 1 : 0.85,
-strokeWeight: isSelected ? 8 : 6,
-zIndex: isSelected ? 100 : 10 + index,
-clickable: true
-      });
+    const selectRoute = () => {
+      applyRouteCandidate(index);
+    };
 
-      polyline.addListener("click", () => {
-        applyRouteCandidate(index);
-      });
+    const outlinePolyline = new google.maps.Polyline({
+      map,
+      path: route.overview_path,
+      strokeColor: "#ffffff",
+      strokeOpacity: 0.95,
+      strokeWeight: isSelected ? 13 : 12,
+      zIndex: isSelected ? 90 : 20 + index,
+      clickable: true
+    });
 
-      routePolylines.push(polyline);
+    outlinePolyline.addListener("click", selectRoute);
+    routePolylines.push(outlinePolyline);
 
-      const midpoint = routeMidpoint(route);
-      if (!midpoint) return;
+    const routePolyline = new google.maps.Polyline({
+      map,
+      path: route.overview_path,
+      strokeColor: isSelected ? "#1a73e8" : "#5f6b76",
+      strokeOpacity: 1,
+      strokeWeight: isSelected ? 8 : 7,
+      zIndex: isSelected ? 100 : 30 + index,
+      clickable: true
+    });
 
-      const totals = sumRouteTotals(route);
-const labelOverlay = createRouteLabelOverlay(
-    midpoint,
-    `${formatDuration(totals.totalDuration)}・${formatDistance(totals.totalDistance)}`,
-    isSelected,
-    () => applyRouteCandidate(index)
-);
+    routePolyline.addListener("click", selectRoute);
+    routePolylines.push(routePolyline);
 
-routeLabelMarkers.push(labelOverlay);
-  
- });
- }
+    const midpoint = routeMidpoint(route);
+    if (!midpoint) return;
+
+    const totals = sumRouteTotals(route);
+
+    const labelOverlay = createRouteLabelOverlay(
+      midpoint,
+      `候補${index + 1}　${formatDuration(totals.totalDuration)}・${formatDistance(totals.totalDistance)}`,
+      isSelected,
+      selectRoute
+    );
+
+    routeLabelMarkers.push(labelOverlay);
+  });
+}
+
+
 
   function routeModeLabel(mode) {
     const labels = {
@@ -1174,7 +1190,15 @@ followToggle.checked = true;
     hideRouteChoices();
 
     try {
-      const modes = ["highway", "partial", "local"];
+      const selectedPreference =
+  document.getElementById("routeMode")?.value || "highway";
+
+const modes =
+  selectedPreference === "local"
+    ? ["local"]
+    : selectedPreference === "partial"
+      ? ["partial", "local"]
+      : ["highway", "partial", "local"];
       const responses = await Promise.all(
         modes.map(async (mode) => ({
           mode,
@@ -1191,7 +1215,12 @@ followToggle.checked = true;
         const { result, status } = response;
         if (status !== "OK" || !result?.routes?.length) return;
 
-        const routeLimit = waypoints.length ? 1 : Math.min(2, result.routes.length);
+       const routeLimit = waypoints.length
+  ? 1
+  : Math.min(
+      selectedPreference === "local" && mode === "local" ? 3 : 2,
+      result.routes.length
+    );
 
         for (let routeIndex = 0; routeIndex < routeLimit; routeIndex += 1) {
           const route = result.routes[routeIndex];
