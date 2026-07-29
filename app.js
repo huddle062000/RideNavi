@@ -253,69 +253,14 @@
     }
   }
 
-  function showRouteChoices(candidates) {
-    hideRouteChoices();
-    routeCandidates = candidates;
+function showRouteChoices(candidates) {
+  hideRouteChoices();
 
-    routeChoicePanel = document.createElement("section");
-    routeChoicePanel.id = "routeChoicePanel";
-    routeChoicePanel.className = "route-choice-panel";
-    routeChoicePanel.setAttribute("aria-label", "ルート候補");
+  routeCandidates = candidates;
+  selectedRouteIndex = 0;
 
-    const header = document.createElement("div");
-    header.className = "route-choice-header";
-
-    const title = document.createElement("strong");
-    title.textContent = "ルートを選んでください";
-
-    const closeButton = document.createElement("button");
-    closeButton.type = "button";
-    closeButton.textContent = "✕";
-    closeButton.setAttribute("aria-label", "ルート候補を閉じる");
-    closeButton.addEventListener("click", hideRouteChoices);
-
-    header.append(title, closeButton);
-    routeChoicePanel.appendChild(header);
-
-    const list = document.createElement("div");
-    list.className = "route-choice-list";
-
-    candidates.forEach((candidate, index) => {
-      const route = candidate.result.routes[candidate.routeIndex];
-      const totals = sumRouteTotals(route);
-
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "route-choice-card";
-      card.setAttribute("aria-pressed", "false");
-
-      const name = document.createElement("strong");
-      name.textContent = routeModeLabel(candidate.mode);
-
-      const metrics = document.createElement("span");
-      metrics.className = "route-choice-metrics";
-      metrics.textContent =
-        `${formatDuration(totals.totalDuration)}・` +
-        `${formatDistance(totals.totalDistance)}`;
-
-      const description = document.createElement("small");
-      description.textContent = routeModeDescription(candidate.mode);
-
-      card.append(name, metrics, description);
-      card.addEventListener("click", () => applyRouteCandidate(index));
-      list.appendChild(card);
-    });
-
-    routeChoicePanel.appendChild(list);
-
-    const note = document.createElement("p");
-    note.className = "route-choice-note";
-    note.textContent =
-      "地図上のルート線またはカードをタップして選べます。道路標識と交通規制を優先してください。";
-    routeChoicePanel.appendChild(note);
-
-    document.body.appendChild(routeChoicePanel);
-    applyRouteCandidate(0, false);
+  applyRouteCandidate(0, false);
+}
   }
 
   function openPanel() {
@@ -427,7 +372,7 @@
     if (showMessage) {
       showStatus("ルートを消去しました", true);
     }
-  }
+  
 
   function getCurrentLatLng() {
     if (!currentPosition) return null;
