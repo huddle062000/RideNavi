@@ -1238,8 +1238,16 @@ map.addListener("click", (event) => {
   const lat = event.latLng.lat().toFixed(6);
   const lng = event.latLng.lng().toFixed(6);
 
+  const useAsDestination = window.confirm(
+    "📍 ここを目的地にしますか？"
+  );
+
+  if (!useAsDestination) return;
+
   destinationInput.value = `${lat},${lng}`;
-  showStatus("📍 タップした場所を目的地に設定しました", true);
+  showStatus("📍 目的地に設定しました。ルートを検索します…");
+
+  searchRoute();
 });
       trafficLayer = new google.maps.TrafficLayer();
 createNavigationInfoPanel();
