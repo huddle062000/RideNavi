@@ -66,6 +66,8 @@
   let selectedRouteIndex = 0;
   let routeCandidates = [];
   let selectedRouteMode = "highway";
+  let routePolylines = [];
+  let routeLabelMarkers = [];
 
   function showStatus(message, autoHide = false) {
     if (!statusEl) return;
@@ -90,6 +92,73 @@
       routeChoicePanel.remove();
       routeChoicePanel = null;
     }
+  }
+
+
+  function clearRouteOverlays() {
+    routePolylines.forEach((polyline) => polyline.setMap(null));
+    routePolylines = [];
+
+    routeLabelMarkers.forEach((marker) => marker.setMap(null));
+    routeLabelMarkers = [];
+  }
+
+  function routeMidpoint(route) {
+    const path = route?.overview_path || [];
+    if (!path.length) return null;
+    return path[Math.floor(path.length / 2)];
+  }
+
+  function drawRouteOverlays() {
+    clearRouteOverlays();
+
+    routeCandidates.forEach((candidate, index) => {
+      const route = candidate.result.routes[candidate.routeIndex];
+      const isSelected = index === selectedRouteIndex;
+
+      const polyline = new google.maps.Polyline({
+        map,
+        path: route.overview_path,
+        strokeColor: isSelected ? "#1a73e8" : "#6f8fcf",
+        strokeOpacity: isSelected ? 1 : 0.7,
+        strokeWeight: isSelected ? 8 : 5,
+        zIndex: isSelected ? 50 : 20 + index,
+        clickable: true
+      });
+
+      polyline.addListener("click", () => {
+        applyRouteCandidate(index);
+      });
+
+      routePolylines.push(polyline);
+
+      const midpoint = routeMidpoint(route);
+      if (!midpoint) return;
+
+      const totals = sumRouteTotals(route);
+      const marker = new google.maps.Marker({
+        map,
+        position: midpoint,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 0
+        },
+        label: {
+          text: `${formatDuration(totals.totalDuration)}・${formatDistance(totals.totalDistance)}`,
+          color: isSelected ? "#174ea6" : "#4d5156",
+          fontSize: isSelected ? "14px" : "12px",
+          fontWeight: "700"
+        },
+        zIndex: isSelected ? 70 : 40 + index,
+        clickable: true
+      });
+
+      marker.addListener("click", () => {
+        applyRouteCandidate(index);
+      });
+
+      routeLabelMarkers.push(marker);
+    });
   }
 
   function routeModeLabel(mode) {
@@ -133,6 +202,12 @@
     selectedRouteIndex = candidateIndex;
     selectedRouteMode = candidate.mode;
 
+    directionsRenderer.setOptions({
+      polylineOptions: {
+        strokeOpacity: 0,
+        strokeWeight: 0
+      }
+    });
     directionsRenderer.setDirections(candidate.result);
     directionsRenderer.setRouteIndex(candidate.routeIndex);
 
@@ -170,6 +245,8 @@
           );
         });
     }
+
+    drawRouteOverlays();
 
     if (announce) {
       showStatus(`${routeModeLabel(candidate.mode)}を選びました`, true);
@@ -234,7 +311,7 @@
     const note = document.createElement("p");
     note.className = "route-choice-note";
     note.textContent =
-      "一部高速候補は道路状況により一般道主体になる場合があります。道路標識と交通規制を優先してください。";
+      "地図上のルート線またはカードをタップして選べます。道路標識と交通規制を優先してください。";
     routeChoicePanel.appendChild(note);
 
     document.body.appendChild(routeChoicePanel);
@@ -336,6 +413,7 @@
     offRouteCount = 0;
     rerouteInProgress = false;
     hideRouteChoices();
+    clearRouteOverlays();
     routeCandidates = [];
     selectedRouteIndex = 0;
     hideNavigationInfoPanel();
@@ -814,6 +892,14 @@
         return;
       }
 
+      clearRouteOverlays();
+      directionsRenderer.setOptions({
+        polylineOptions: {
+          strokeColor: "#1a73e8",
+          strokeOpacity: 0.95,
+          strokeWeight: 7
+        }
+      });
       directionsRenderer.setDirections(result);
       lastRouteResult = result;
       buildNavigationSteps(result);
@@ -1490,7 +1576,7 @@
       createNavigationInfoPanel();
       createZoomButtons();
 
-      showStatus("Ride Navi 2.3 β を読み込みました", true);
+      showStatus("Ride Navi 2.3.1 β を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
