@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#1a73e8">
-  <title>Ride Navi 2.2 β</title>
+  <title>Ride Navi 2.3 β</title>
 
   <link rel="manifest" href="manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -19,7 +19,7 @@
     <header class="top-bar">
       <div>
         <strong>🏍 Ride Navi</strong>
-        <span>2.2 β・経由地対応</span>
+        <span>2.3 β・3ルート比較</span>
       </div>
       <button id="menuButton" type="button" aria-label="メニュー">☰</button>
     </header>
@@ -55,15 +55,15 @@
         <input id="destinationInput" type="text" placeholder="例：道の駅 美山ふれあい広場">
       </label>
 <label class="field">
-  <span>ルートの種類</span>
-  <select id="routeMode">
-    <option value="highway">🚀 高速優先</option>
-    <option value="partial">🛣️ 一部高速</option>
-    <option value="local">🌿 一般道</option>
-  </select>
-</label>
+        <span>最初に表示する候補</span>
+        <select id="routeMode">
+          <option value="highway">🚀 高速優先</option>
+          <option value="partial">🛣️ 一部高速候補</option>
+          <option value="local">🌿 一般道</option>
+        </select>
+      </label>
       <button id="routeButton" class="primary" type="button">
-        🧭 ルートを表示
+        🧭 3種類のルートを比較
       </button>
 
       <div class="button-grid">
@@ -95,7 +95,7 @@
       </div>
 
       <p class="note">
-        経由地は入力した順番に通ります。道路標識・交通規制を優先してください。
+        高速・一部高速候補・一般道を比較します。経由地がある場合は各種類1件になります。道路標識・交通規制を優先してください。
       </p>
     </section>
 
@@ -104,6 +104,6 @@
   </main>
 
   <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=2.3"></script>
 </body>
 </html>

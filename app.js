@@ -63,7 +63,9 @@
   let statusTimer = null;
   let routeSearching = false;
   let routeChoicePanel = null;
-let selectedRouteIndex = 0;
+  let selectedRouteIndex = 0;
+  let routeCandidates = [];
+  let selectedRouteMode = "highway";
 
   function showStatus(message, autoHide = false) {
     if (!statusEl) return;
@@ -82,12 +84,162 @@ let selectedRouteIndex = 0;
       }, 2600);
     }
   }
+
   function hideRouteChoices() {
-  if (routeChoicePanel) {
-    routeChoicePanel.remove();
-    routeChoicePanel = null;
+    if (routeChoicePanel) {
+      routeChoicePanel.remove();
+      routeChoicePanel = null;
+    }
   }
-}
+
+  function routeModeLabel(mode) {
+    const labels = {
+      highway: "🚀 高速優先",
+      partial: "🛣️ 一部高速候補",
+      local: "🌿 一般道"
+    };
+    return labels[mode] || "ルート";
+  }
+
+  function routeModeDescription(mode) {
+    const descriptions = {
+      highway: "高速・有料道路を利用できる最短時間寄り",
+      partial: "有料道路を避けつつ、高規格道路を使う候補",
+      local: "高速道路と有料道路を避ける"
+    };
+    return descriptions[mode] || "";
+  }
+
+  function routeSignature(route) {
+    const totals = sumRouteTotals(route);
+    return [
+      route.summary || "",
+      Math.round(totals.totalDistance / 500),
+      Math.round(totals.totalDuration / 300)
+    ].join("|");
+  }
+
+  function makeSingleRouteResult(result, routeIndex) {
+    return {
+      ...result,
+      routes: [result.routes[routeIndex]]
+    };
+  }
+
+  function applyRouteCandidate(candidateIndex, announce = true) {
+    const candidate = routeCandidates[candidateIndex];
+    if (!candidate) return;
+
+    selectedRouteIndex = candidateIndex;
+    selectedRouteMode = candidate.mode;
+
+    directionsRenderer.setDirections(candidate.result);
+    directionsRenderer.setRouteIndex(candidate.routeIndex);
+
+    const singleResult = makeSingleRouteResult(
+      candidate.result,
+      candidate.routeIndex
+    );
+
+    lastRouteResult = singleResult;
+    buildNavigationSteps(singleResult);
+    updateRoutePath(singleResult);
+
+    const route = singleResult.routes[0];
+    const totals = sumRouteTotals(route);
+    updateNavigationInfoPanel(route);
+
+    if (navigationButton) {
+      navigationButton.disabled = navigationSteps.length === 0;
+    }
+
+    routeInfo.innerHTML =
+      `種類：${routeModeLabel(candidate.mode)}<br>` +
+      `距離：${formatDistance(totals.totalDistance)}<br>` +
+      `時間：${formatDuration(totals.totalDuration)}<br>` +
+      `経由地：${getWaypointValues().length}か所`;
+
+    if (routeChoicePanel) {
+      routeChoicePanel
+        .querySelectorAll(".route-choice-card")
+        .forEach((card, index) => {
+          card.classList.toggle("is-selected", index === candidateIndex);
+          card.setAttribute(
+            "aria-pressed",
+            index === candidateIndex ? "true" : "false"
+          );
+        });
+    }
+
+    if (announce) {
+      showStatus(`${routeModeLabel(candidate.mode)}を選びました`, true);
+    }
+  }
+
+  function showRouteChoices(candidates) {
+    hideRouteChoices();
+    routeCandidates = candidates;
+
+    routeChoicePanel = document.createElement("section");
+    routeChoicePanel.id = "routeChoicePanel";
+    routeChoicePanel.className = "route-choice-panel";
+    routeChoicePanel.setAttribute("aria-label", "ルート候補");
+
+    const header = document.createElement("div");
+    header.className = "route-choice-header";
+
+    const title = document.createElement("strong");
+    title.textContent = "ルートを選んでください";
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.textContent = "✕";
+    closeButton.setAttribute("aria-label", "ルート候補を閉じる");
+    closeButton.addEventListener("click", hideRouteChoices);
+
+    header.append(title, closeButton);
+    routeChoicePanel.appendChild(header);
+
+    const list = document.createElement("div");
+    list.className = "route-choice-list";
+
+    candidates.forEach((candidate, index) => {
+      const route = candidate.result.routes[candidate.routeIndex];
+      const totals = sumRouteTotals(route);
+
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "route-choice-card";
+      card.setAttribute("aria-pressed", "false");
+
+      const name = document.createElement("strong");
+      name.textContent = routeModeLabel(candidate.mode);
+
+      const metrics = document.createElement("span");
+      metrics.className = "route-choice-metrics";
+      metrics.textContent =
+        `${formatDuration(totals.totalDuration)}・` +
+        `${formatDistance(totals.totalDistance)}`;
+
+      const description = document.createElement("small");
+      description.textContent = routeModeDescription(candidate.mode);
+
+      card.append(name, metrics, description);
+      card.addEventListener("click", () => applyRouteCandidate(index));
+      list.appendChild(card);
+    });
+
+    routeChoicePanel.appendChild(list);
+
+    const note = document.createElement("p");
+    note.className = "route-choice-note";
+    note.textContent =
+      "一部高速候補は道路状況により一般道主体になる場合があります。道路標識と交通規制を優先してください。";
+    routeChoicePanel.appendChild(note);
+
+    document.body.appendChild(routeChoicePanel);
+    applyRouteCandidate(0, false);
+  }
 
   function openPanel() {
     controlPanel?.classList.remove("is-hidden");
@@ -183,6 +335,9 @@ let selectedRouteIndex = 0;
     routePathPoints = [];
     offRouteCount = 0;
     rerouteInProgress = false;
+    hideRouteChoices();
+    routeCandidates = [];
+    selectedRouteIndex = 0;
     hideNavigationInfoPanel();
     if (navigationButton) navigationButton.disabled = true;
     if (directionsRenderer) {
@@ -242,9 +397,9 @@ let selectedRouteIndex = 0;
       accuracyCircle.setRadius(accuracy);
     }
 
-if (followToggle.checked) {
-  map.panTo(point);
-}
+    if (followToggle.checked) {
+      map.panTo(point);
+    }
 
     if (headingUpEnabled && Number.isFinite(lastKnownHeading)) {
       map.setHeading(lastKnownHeading);
@@ -640,13 +795,15 @@ if (followToggle.checked) {
         trafficModel: google.maps.TrafficModel.BEST_GUESS
       },
       unitSystem: google.maps.UnitSystem.METRIC,
+      avoidHighways: selectedRouteMode === "local",
+      avoidTolls: selectedRouteMode !== "highway",
       region: "JP"
     };
 
     rerouteInProgress = true;
     lastRerouteTime = Date.now();
- showStatus("🔄 新しいルートを探しています…");
-speakNavigation("新しいルートを検索します。");
+    showStatus("🔄 新しいルートを探しています…");
+    speakNavigation("新しいルートを検索します。");
 
     directionsService.route(request, (result, status) => {
       rerouteInProgress = false;
@@ -799,6 +956,7 @@ speakNavigation("新しいルートを検索します。");
 
     url.searchParams.set("o", sharedOrigin);
     url.searchParams.set("d", destinationText);
+    url.searchParams.set("mode", selectedRouteMode);
 
     waypoints.forEach((waypoint) => {
       url.searchParams.append("w", waypoint);
@@ -840,11 +998,15 @@ speakNavigation("新しいルートを検索します。");
     const origin = params.get("o");
     const destination = params.get("d");
     const waypoints = params.getAll("w").slice(0, MAX_WAYPOINTS);
+    const mode = params.get("mode");
 
     if (!origin || !destination) return false;
 
     originInput.value = origin;
     destinationInput.value = destination;
+    if (mode && ["highway", "partial", "local"].includes(mode)) {
+      selectedRouteMode = mode;
+    }
     waypointList.innerHTML = "";
 
     waypoints.forEach((waypoint) => addWaypoint(waypoint));
@@ -856,7 +1018,36 @@ speakNavigation("新しいルートを検索します。");
     return true;
   }
 
-  function searchRoute() {
+  function routeRequest(origin, destination, waypoints, mode) {
+    const hasWaypoints = waypoints.length > 0;
+
+    return {
+      origin,
+      destination,
+      waypoints,
+      optimizeWaypoints: false,
+      travelMode: google.maps.TravelMode.DRIVING,
+      drivingOptions: {
+        departureTime: new Date(),
+        trafficModel: google.maps.TrafficModel.BEST_GUESS
+      },
+      unitSystem: google.maps.UnitSystem.METRIC,
+      avoidHighways: mode === "local",
+      avoidTolls: mode !== "highway",
+      provideRouteAlternatives: !hasWaypoints,
+      region: "JP"
+    };
+  }
+
+  function directionsPromise(request) {
+    return new Promise((resolve) => {
+      directionsService.route(request, (result, status) => {
+        resolve({ result, status });
+      });
+    });
+  }
+
+  async function searchRoute() {
     if (!map || !directionsService || !directionsRenderer) {
       showStatus("ルート機能を読み込み中です");
       return;
@@ -868,7 +1059,6 @@ speakNavigation("新しいルートを検索します。");
     const destinationText = destinationInput.value.trim();
     const waypointValues = getWaypointValues();
 
-    const routeMode = document.getElementById("routeMode").value;
     if (!originText || !destinationText) {
       showStatus("出発地と目的地を入力してください");
       return;
@@ -890,57 +1080,80 @@ speakNavigation("新しいルートを検索します。");
       stopover: true
     }));
 
-    const request = {
-      origin,
-      destination: destinationText,
-      waypoints,
-      optimizeWaypoints: false,
-      travelMode: google.maps.TravelMode.DRIVING,
-      drivingOptions: {
-        departureTime: new Date(),
-        trafficModel: google.maps.TrafficModel.BEST_GUESS
-      },
-      unitSystem: google.maps.UnitSystem.METRIC,
-      avoidHighways: routeMode === "local",
-avoidTolls: routeMode === "local",
-provideRouteAlternatives: true,
-      region: "JP"
-    };
-
     routeSearching = true;
     routeButton.disabled = true;
-    routeButton.textContent = "検索中…";
-    showStatus("経由地を含むルートを検索しています…");
+    routeButton.textContent = "3種類を検索中…";
+    showStatus("高速・一部高速・一般道を比較しています…");
+    hideRouteChoices();
 
-    directionsService.route(request, (result, status) => {
-      routeSearching = false;
-      routeButton.disabled = false;
-      routeButton.textContent = "🧭 ルートを表示";
+    try {
+      const modes = ["highway", "partial", "local"];
+      const responses = await Promise.all(
+        modes.map(async (mode) => ({
+          mode,
+          response: await directionsPromise(
+            routeRequest(origin, destinationText, waypoints, mode)
+          )
+        }))
+      );
 
-      if (status !== "OK" || !result?.routes?.length) {
-        console.error("Directions route error:", status, result);
-        showStatus(routeErrorMessage(status));
+      const candidates = [];
+      const seen = new Set();
+
+      responses.forEach(({ mode, response }) => {
+        const { result, status } = response;
+        if (status !== "OK" || !result?.routes?.length) return;
+
+        const routeLimit = waypoints.length ? 1 : Math.min(2, result.routes.length);
+
+        for (let routeIndex = 0; routeIndex < routeLimit; routeIndex += 1) {
+          const route = result.routes[routeIndex];
+          const signature = routeSignature(route);
+          if (seen.has(signature)) continue;
+
+          seen.add(signature);
+          candidates.push({ mode, result, routeIndex });
+        }
+      });
+
+      if (!candidates.length) {
+        const firstError = responses.find(
+          ({ response }) => response.status !== "OK"
+        )?.response.status;
+        showStatus(routeErrorMessage(firstError || "ZERO_RESULTS"));
         return;
       }
 
-      directionsRenderer.setDirections(result);
-      lastRouteResult = result;
-      buildNavigationSteps(result);
-      updateRoutePath(result);
-      if (navigationButton) navigationButton.disabled = navigationSteps.length === 0;
+      const preferredMode =
+        document.getElementById("routeMode")?.value || "highway";
+      const baseOrder = ["highway", "partial", "local"];
+      const orderedModes = [
+        preferredMode,
+        ...baseOrder.filter((mode) => mode !== preferredMode)
+      ];
+      const modeOrder = Object.fromEntries(
+        orderedModes.map((mode, index) => [mode, index])
+      );
+      candidates.sort((a, b) => {
+        const modeDifference = modeOrder[a.mode] - modeOrder[b.mode];
+        if (modeDifference !== 0) return modeDifference;
 
-      const route = result.routes[0];
-      const totals = sumRouteTotals(route);
-      updateNavigationInfoPanel(route);
+        const aTotals = sumRouteTotals(a.result.routes[a.routeIndex]);
+        const bTotals = sumRouteTotals(b.result.routes[b.routeIndex]);
+        return aTotals.totalDuration - bTotals.totalDuration;
+      });
 
-      routeInfo.innerHTML =
-        `距離：${formatDistance(totals.totalDistance)}<br>` +
-        `時間：${formatDuration(totals.totalDuration)}<br>` +
-        `経由地：${waypointValues.length}か所`;
-
+      showRouteChoices(candidates);
       closePanel();
-      showStatus("経由地付きルートを表示しました", true);
-    });
+      showStatus(`${candidates.length}件のルート候補が見つかりました`, true);
+    } catch (error) {
+      console.error("Directions route error:", error);
+      showStatus("ルート候補の検索に失敗しました");
+    } finally {
+      routeSearching = false;
+      routeButton.disabled = false;
+      routeButton.textContent = "🧭 3種類のルートを比較";
+    }
   }
 
   function createNavigationInfoPanel() {
@@ -1245,37 +1458,39 @@ provideRouteAlternatives: true,
         }
       });
 
-map.addListener("click", (event) => {
-  if (!event.latLng) return;
+      map.addListener("click", (event) => {
+        if (!event.latLng) return;
 
-  const lat = event.latLng.lat().toFixed(6);
-  const lng = event.latLng.lng().toFixed(6);
+        const lat = event.latLng.lat().toFixed(6);
+        const lng = event.latLng.lng().toFixed(6);
 
-  const useAsDestination = window.confirm(
-    "📍 ここを目的地にしますか？"
-  );
+        const useAsDestination = window.confirm(
+          "📍 ここを目的地にして、3種類のルートを比較しますか？"
+        );
 
-  if (!useAsDestination) return;
-if (!destinationMarker) {
-  destinationMarker = new google.maps.Marker({
-    map: map,
-    position: event.latLng,
-    title: "目的地",
-    animation: google.maps.Animation.DROP
-  });
-} else {
-  destinationMarker.setPosition(event.latLng);
-}
-  destinationInput.value = `${lat},${lng}`;
-  showStatus("📍 目的地に設定しました。ルートを検索します…");
+        if (!useAsDestination) return;
 
-  searchRoute();
-});
+        if (!destinationMarker) {
+          destinationMarker = new google.maps.Marker({
+            map,
+            position: event.latLng,
+            title: "目的地",
+            animation: google.maps.Animation.DROP
+          });
+        } else {
+          destinationMarker.setPosition(event.latLng);
+        }
+
+        destinationInput.value = `${lat},${lng}`;
+        showStatus("📍 目的地を設定しました。ルートを比較します…");
+        searchRoute();
+      });
+
       trafficLayer = new google.maps.TrafficLayer();
-createNavigationInfoPanel();
-createZoomButtons();
+      createNavigationInfoPanel();
+      createZoomButtons();
 
-showStatus("Ride Navi 2.10 透明縦型ナビ情報版を読み込みました", true);
+      showStatus("Ride Navi 2.3 β を読み込みました", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
