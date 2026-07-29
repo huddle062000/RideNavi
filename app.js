@@ -261,7 +261,7 @@ function showRouteChoices(candidates) {
 
   applyRouteCandidate(0, false);
 }
-  }
+
 
   function openPanel() {
     controlPanel?.classList.remove("is-hidden");
