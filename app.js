@@ -62,6 +62,8 @@
   let accuracyCircle = null;
   let statusTimer = null;
   let routeSearching = false;
+  let routeChoicePanel = null;
+let selectedRouteIndex = 0;
 
   function showStatus(message, autoHide = false) {
     if (!statusEl) return;
