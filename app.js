@@ -32,6 +32,18 @@
       /(?:高速|自動車道|有料道路|都市高速|入口|IC|ＩＣ|インターチェンジ).*(?:手前|付近)/
     ]
   };
+  const ROAD_NAME_TYPE_PATTERNS = {
+    highway: [
+      /高速/,
+      /自動車道/,
+      /有料道路/,
+      /都市高速/
+    ],
+    ordinary: [
+      /(?:国道|県道|府道|都道|道道|市道|町道|村道)/,
+      /(?:道路|街道|バイパス|ロード|通り)$/
+    ]
+  };
 
   const config = window.RIDE_NAVI_CONFIG || {};
   const apiKey = String(config.GOOGLE_MAPS_API_KEY || "").trim();
@@ -143,23 +155,26 @@
     return patterns.some((pattern) => pattern.test(instruction));
   }
 
-  function guidanceRoadNames(instructionHtml, instruction) {
+  function guidanceRoadNameCandidates(instructionHtml, instruction) {
     const temporary = document.createElement("div");
     temporary.innerHTML = instructionHtml || "";
 
     const emphasizedNames = [...temporary.querySelectorAll("b")]
       .map((element) => element.textContent.replace(/\s+/g, " ").trim())
       .filter((text) =>
-        /(?:道路|道|高速|国道|県道|府道|都道|道道|バイパス|IC|ＩＣ|インターチェンジ|入口|出口|料金所)/.test(
+        /(?:道路|高速|国道|県道|府道|都道|道道|市道|町道|村道|街道|バイパス|ロード|大橋|通り|IC|ＩＣ|インターチェンジ|入口|出口|料金所)/.test(
           text
         )
       );
     const inferredNames = [
       ...(instruction.match(
-        /(?:国道|県道|府道|都道|道道)\s*\d+\s*号(?:線)?/g
+        /(?:国道|県道|府道|都道|道道|市道|町道|村道)\s*\d+\s*号(?:線)?/g
       ) || []),
       ...(instruction.match(
         /[一-龯ァ-ヶーA-Za-z0-9０-９]+(?:高速道路|自動車道|有料道路|バイパス)/g
+      ) || []),
+      ...(instruction.match(
+        /[一-龯ァ-ヶーA-Za-z0-9０-９]+(?:道路|街道|バイパス|ロード|大橋|通り)/g
       ) || []),
       ...(instruction.match(
         /[一-龯ァ-ヶーA-Za-z0-9０-９]+(?:IC|ＩＣ|インターチェンジ)(?:入口|出口)?/g
@@ -171,7 +186,48 @@
       )
     ];
 
-    return names.length ? names.join(" / ") : "取得できず";
+    return names;
+  }
+
+  function guidanceRoadNames(roadNames) {
+    return roadNames.length ? roadNames.join(" / ") : "取得できず";
+  }
+
+  function isDestinationRoadName(instruction, roadName) {
+    const escapedRoadName = roadName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(
+      `${escapedRoadName}\\s*(?:方面|方向|へ向かう|に向かう)`
+    ).test(instruction);
+  }
+
+  function classifyGuidanceRoadNames(roadNames, instruction) {
+    if (
+      roadNames.some((roadName) =>
+        matchesGuidancePattern(
+          roadName,
+          ROAD_NAME_TYPE_PATTERNS.highway
+        )
+      )
+    ) {
+      return "highway";
+    }
+
+    const ordinaryRoadNames = roadNames.filter((roadName) =>
+      matchesGuidancePattern(
+        roadName,
+        ROAD_NAME_TYPE_PATTERNS.ordinary
+      )
+    );
+
+    if (
+      ordinaryRoadNames.some(
+        (roadName) => !isDestinationRoadName(instruction, roadName)
+      )
+    ) {
+      return "ordinary";
+    }
+
+    return "unknown";
   }
 
   function logRouteColorTransition({
@@ -179,8 +235,8 @@
     context,
     legIndex,
     stepIndex,
-    instructionHtml,
     instruction,
+    roadNames,
     transition,
     reason
   }) {
@@ -191,7 +247,7 @@
       leg番号: legIndex + 1,
       step番号: stepIndex + 1,
       案内文: instruction || "取得できず",
-      道路名: guidanceRoadNames(instructionHtml, instruction),
+      道路名: guidanceRoadNames(roadNames),
       判定理由: reason
     });
   }
@@ -207,6 +263,14 @@
 
         const instructionHtml = step.instructions || "";
         const instruction = stripHtmlInstruction(instructionHtml);
+        const roadNames = guidanceRoadNameCandidates(
+          instructionHtml,
+          instruction
+        );
+        const roadNameType = classifyGuidanceRoadNames(
+          roadNames,
+          instruction
+        );
         const matchesExit = matchesGuidancePattern(
           instruction,
           HIGHWAY_GUIDANCE_PATTERNS.exit
@@ -234,6 +298,8 @@
           highwayActive = false;
         } else if (isEntry) {
           highwayActive = true;
+        } else if (highwayActive && roadNameType === "ordinary") {
+          highwayActive = false;
         }
 
         if (wasHighwayActive !== highwayActive) {
@@ -242,14 +308,16 @@
             context,
             legIndex,
             stepIndex,
-            instructionHtml,
             instruction,
+            roadNames,
             transition: highwayActive ? "青→赤" : "赤→青",
             reason: highwayActive
               ? "高速道路・有料道路へ入る／進入する／合流する案内に一致"
               : matchesExit
                 ? "高速道路・有料道路から降りる／退出する案内に一致"
-                : "高速走行中に出口・降りる・退出を示す語句に一致"
+                : matchesExitIndicator
+                  ? "高速走行中に出口・降りる・退出を示す語句に一致"
+                  : "現在のstepで一般道の道路名を確認"
           });
         }
 
