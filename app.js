@@ -46,6 +46,20 @@
       /(?:道路|街道|バイパス|ロード|通り)$/
     ]
   };
+  const TOLL_EVIDENCE_PATTERNS = [
+    /有料/,
+    /料金所/,
+    /通行料金/,
+    /ETC/i,
+    /toll/i
+  ];
+  const EXPRESSWAY_EVIDENCE_PATTERNS = [
+    /高速/,
+    /自動車道/,
+    /都市高速/,
+    /expressway/i
+  ];
+  const PARTIAL_TOLL_MAX_DISTANCE_RATIO = 0.5;
 
   const config = window.RIDE_NAVI_CONFIG || {};
   const apiKey = String(config.GOOGLE_MAPS_API_KEY || "").trim();
@@ -112,7 +126,7 @@
   let routeChoicePanel = null;
   let selectedRouteIndex = 0;
   let routeCandidates = [];
-  let selectedRouteMode = "highway";
+  let selectedRouteMode = "local";
   let routePolylines = [];
   let routeLabelMarkers = [];
   const routeSearchCache = new Map();
@@ -234,6 +248,142 @@
     }
 
     return "unknown";
+  }
+
+  function matchesTollEvidence(text) {
+    return TOLL_EVIDENCE_PATTERNS.some((pattern) => pattern.test(text));
+  }
+
+  function matchesExpresswayEvidence(text) {
+    return EXPRESSWAY_EVIDENCE_PATTERNS.some((pattern) => pattern.test(text));
+  }
+
+  function stepPathDistanceMeters(step) {
+    if (Number.isFinite(step?.distance?.value)) {
+      return step.distance.value;
+    }
+
+    const path = (step?.path || []).map((point) => ({
+      lat: typeof point.lat === "function" ? point.lat() : point.lat,
+      lng: typeof point.lng === "function" ? point.lng() : point.lng
+    }));
+    let distance = 0;
+
+    for (let index = 1; index < path.length; index += 1) {
+      distance += distanceBetweenMeters(path[index - 1], path[index]);
+    }
+
+    return distance;
+  }
+
+  function routeTollUsage(route) {
+    let tollActive = false;
+    let tollDistance = 0;
+    let measuredDistance = 0;
+    let hasTollEvidence = matchesTollEvidence(
+      (route?.warnings || []).join(" ")
+    );
+    let hasExpresswayEvidence = false;
+
+    route?.legs?.forEach((leg) => {
+      leg.steps?.forEach((step) => {
+        const instructionHtml = step.instructions || "";
+        const instruction = stripHtmlInstruction(instructionHtml);
+        const roadNames = guidanceRoadNameCandidates(
+          instructionHtml,
+          instruction
+        );
+        const roadNameType = classifyGuidanceRoadNames(
+          roadNames,
+          instruction
+        );
+        const stepHasTollEvidence =
+          matchesTollEvidence(instruction) ||
+          roadNames.some(matchesTollEvidence);
+        const stepHasExpresswayEvidence =
+          matchesExpresswayEvidence(instruction) ||
+          roadNames.some(matchesExpresswayEvidence);
+        const isExit =
+          matchesGuidancePattern(
+            instruction,
+            HIGHWAY_GUIDANCE_PATTERNS.exit
+          ) ||
+          (
+            tollActive &&
+            matchesGuidancePattern(
+              instruction,
+              HIGHWAY_GUIDANCE_PATTERNS.exitIndicator
+            )
+          );
+        const isEntry =
+          (stepHasTollEvidence ||
+            (hasTollEvidence && stepHasExpresswayEvidence)) &&
+          matchesGuidancePattern(
+            instruction,
+            HIGHWAY_GUIDANCE_PATTERNS.entry
+          );
+        const stepDistance = stepPathDistanceMeters(step);
+        const leavesTollOnCurrentStep =
+          isExit ||
+          (tollActive && roadNameType === "ordinary");
+        const entersTollAfterCurrentStep =
+          !tollActive && isEntry;
+        const stepUsesToll =
+          !leavesTollOnCurrentStep &&
+          !entersTollAfterCurrentStep &&
+          (
+            tollActive ||
+            stepHasTollEvidence ||
+            (hasTollEvidence && stepHasExpresswayEvidence)
+          );
+
+        measuredDistance += stepDistance;
+        if (stepUsesToll) tollDistance += stepDistance;
+        hasTollEvidence ||= stepHasTollEvidence;
+        hasExpresswayEvidence ||= stepHasExpresswayEvidence;
+
+        if (isExit) {
+          tollActive = false;
+        } else if (isEntry || stepHasTollEvidence) {
+          tollActive = true;
+        } else if (tollActive && roadNameType === "ordinary") {
+          tollActive = false;
+        }
+      });
+    });
+
+    const totalDistance =
+      sumRouteTotals(route).totalDistance || measuredDistance;
+
+    return {
+      hasToll: hasTollEvidence,
+      hasPaidExpressway: hasTollEvidence && hasExpresswayEvidence,
+      tollDistanceRatio:
+        tollDistance / Math.max(totalDistance, 1)
+    };
+  }
+
+  function isPartialTollRoute(route, freeRouteDuration) {
+    const tollUsage = routeTollUsage(route);
+    const duration = sumRouteTotals(route).totalDuration;
+
+    return (
+      Number.isFinite(freeRouteDuration) &&
+      tollUsage.hasToll &&
+      tollUsage.tollDistanceRatio > 0 &&
+      tollUsage.tollDistanceRatio <= PARTIAL_TOLL_MAX_DISTANCE_RATIO &&
+      duration < freeRouteDuration
+    );
+  }
+
+  function routeMatchesMode(route, mode, freeRouteDuration) {
+    const tollUsage = routeTollUsage(route);
+
+    if (mode === "local") return !tollUsage.hasToll;
+    if (mode === "partial") {
+      return isPartialTollRoute(route, freeRouteDuration);
+    }
+    return tollUsage.hasPaidExpressway;
   }
 
   function stepPathSummary(path) {
@@ -546,17 +696,17 @@ function drawRouteOverlays() {
   function routeModeLabel(mode) {
     const labels = {
       highway: "🚀 高速優先",
-      partial: "🛣️ 無料高速OK",
-      local: "🌿 一般道"
+      partial: "🛣️ 一部有料",
+      local: "🌿 無料ルート"
     };
     return labels[mode] || "ルート";
   }
 
   function routeModeDescription(mode) {
     const descriptions = {
-      highway: "高速・有料道路を利用できる最短時間寄り",
-      partial: "有料道路を避けつつ、高規格道路を使う候補",
-      local: "高速道路と有料道路を避ける"
+      highway: "有料高速道路を利用する最短時間の候補",
+      partial: "有料道路を一部利用し、無料ルートより早い候補",
+      local: "一般道と無料の高速道路・バイパスを使う候補"
     };
     return descriptions[mode] || "";
   }
@@ -1675,8 +1825,8 @@ followToggle.checked = true;
         trafficModel: google.maps.TrafficModel.BEST_GUESS
       },
       unitSystem: google.maps.UnitSystem.METRIC,
-      avoidHighways: selectedRouteMode === "local",
-      avoidTolls: selectedRouteMode !== "highway",
+      avoidHighways: false,
+      avoidTolls: selectedRouteMode === "local",
       region: "JP"
     };
 
@@ -1975,8 +2125,8 @@ followToggle.checked = true;
         trafficModel: google.maps.TrafficModel.BEST_GUESS
       },
       unitSystem: google.maps.UnitSystem.METRIC,
-      avoidHighways: mode === "local",
-      avoidTolls: mode !== "highway",
+      avoidHighways: false,
+      avoidTolls: mode === "local",
       provideRouteAlternatives: !hasWaypoints,
       region: "JP"
     };
@@ -2000,7 +2150,7 @@ followToggle.checked = true;
     const destinationText = destinationInput.value.trim();
     const waypointValues = getWaypointValues();
     const selectedPreference =
-      document.getElementById("routeMode")?.value || "highway";
+      document.getElementById("routeMode")?.value || "local";
 
     if (!originText || !destinationText) {
       showStatus("出発地と目的地を入力してください");
@@ -2050,7 +2200,7 @@ followToggle.checked = true;
     routeButton.disabled = true;
     routeButton.textContent = "ルートを検索中…";
     resetRouteSearchState(selectedPreference);
-    showStatus("高速優先・無料高速OK・一般道を比較しています…");
+    showStatus("無料ルート・一部有料・高速優先を比較しています…");
 
     try {
       const cachedCandidates = cachedRouteCandidates(cacheKey);
@@ -2073,7 +2223,7 @@ followToggle.checked = true;
           ? ["local"]
           : selectedPreference === "partial"
             ? ["partial", "local"]
-            : ["highway", "partial", "local"];
+            : ["highway", "local"];
       diagnostics.apiRequestCount += modes.length;
 
       const responses = await Promise.all(
@@ -2208,6 +2358,21 @@ followToggle.checked = true;
         return true;
       };
 
+      const freeResponse = responses.find(({ mode }) => mode === "local");
+      const freeRoutes =
+        freeResponse?.response.status === "OK"
+          ? (freeResponse.response.result?.routes || []).filter((route) =>
+              routeMatchesMode(route, "local", Infinity)
+            )
+          : [];
+      const freeRouteDuration = freeRoutes.length
+        ? Math.min(
+            ...freeRoutes.map(
+              (route) => sumRouteTotals(route).totalDuration
+            )
+          )
+        : Infinity;
+
       responses.forEach(({ mode, response }) => {
         const { result, status } = response;
         if (status !== "OK" || !result?.routes?.length) {
@@ -2216,9 +2381,38 @@ followToggle.checked = true;
         }
 
         diagnostics.apiRouteCount += result.routes.length;
+        const fastestHighwayRoute =
+          mode === "highway"
+            ? result.routes
+                .filter((route) =>
+                  routeMatchesMode(route, "highway", freeRouteDuration)
+                )
+                .sort(
+                  (first, second) =>
+                    sumRouteTotals(first).totalDuration -
+                    sumRouteTotals(second).totalDuration
+                )[0]
+            : null;
+
         result.routes.forEach((route, routeIndex) => {
+          let candidateMode = mode;
+
+          if (mode === "local") {
+            if (!routeMatchesMode(route, "local", freeRouteDuration)) return;
+          } else if (mode === "partial") {
+            if (!routeMatchesMode(route, "partial", freeRouteDuration)) return;
+          } else if (route === fastestHighwayRoute) {
+            candidateMode = "highway";
+          } else if (
+            routeMatchesMode(route, "partial", freeRouteDuration)
+          ) {
+            candidateMode = "partial";
+          } else {
+            return;
+          }
+
           evaluateCandidate(
-            { mode, result, routeIndex },
+            { mode: candidateMode, result, routeIndex },
             "通常検索"
           );
         });
@@ -2353,6 +2547,18 @@ followToggle.checked = true;
               `${Math.round(viaPoint.offsetMeters / 1000)}km`;
             const automaticPracticality =
               evaluateAutomaticRoutePracticality(route, baseRoute);
+            const matchesSelectedMode = routeMatchesMode(
+              route,
+              selectedPreference,
+              freeRouteDuration
+            );
+
+            if (!matchesSelectedMode) {
+              automaticPracticality.accepted = false;
+              automaticPracticality.rejectionReasons.push(
+                `${routeModeLabel(selectedPreference)}条件外`
+              );
+            }
 
             if (
               evaluateCandidate(
