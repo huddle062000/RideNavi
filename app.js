@@ -3232,24 +3232,23 @@ followToggle.checked = true;
     }
   }
 
-  function createZoomButtons() {
-    if (document.getElementById("rideNaviZoomControls")) return;
+  function createHeadingButton() {
+    if (document.getElementById("rideNaviHeadingControl")) return;
 
     const style = document.createElement("style");
     style.textContent = `
-      #rideNaviZoomControls {
+      #rideNaviHeadingControl {
         position: fixed;
-        right: 74px;
-        bottom: calc(18px + env(safe-area-inset-bottom));
+        right: 16px;
+        bottom: calc(172px + env(safe-area-inset-bottom));
         z-index: 1000;
         display: flex;
-        gap: 8px;
         align-items: center;
       }
 
-      #rideNaviZoomControls button {
-        width: 46px;
-        height: 46px;
+      #rideNaviHeadingControl button {
+        width: 52px;
+        height: 52px;
         border: 1px solid rgba(0, 0, 0, 0.18);
         border-radius: 50%;
         background: #ffffff;
@@ -3263,44 +3262,20 @@ followToggle.checked = true;
         user-select: none;
       }
 
-      #rideNaviZoomControls button:active {
+      #rideNaviHeadingControl button:active {
         transform: scale(0.94);
       }
 
-      #rideNaviZoomControls button.active {
+      #rideNaviHeadingControl button.active {
         background: #1a73e8;
         color: #ffffff;
-      }
-
-      @media (max-width: 480px) {
-        #rideNaviZoomControls {
-          right: 70px;
-          gap: 6px;
-        }
-
-        #rideNaviZoomControls button {
-          width: 44px;
-          height: 44px;
-        }
       }
     `;
     document.head.appendChild(style);
 
     const controls = document.createElement("div");
-    controls.id = "rideNaviZoomControls";
-    controls.setAttribute("aria-label", "地図の拡大縮小");
-
-    const zoomOutButton = document.createElement("button");
-    zoomOutButton.type = "button";
-    zoomOutButton.textContent = "−";
-    zoomOutButton.title = "地図を縮小";
-    zoomOutButton.setAttribute("aria-label", "地図を縮小");
-
-    const zoomInButton = document.createElement("button");
-    zoomInButton.type = "button";
-    zoomInButton.textContent = "＋";
-    zoomInButton.title = "地図を拡大";
-    zoomInButton.setAttribute("aria-label", "地図を拡大");
+    controls.id = "rideNaviHeadingControl";
+    controls.setAttribute("aria-label", "地図の方位");
 
     headingButton = document.createElement("button");
     headingButton.type = "button";
@@ -3308,18 +3283,6 @@ followToggle.checked = true;
     headingButton.title = "進行方向を上に表示";
     headingButton.setAttribute("aria-label", "進行方向を上に表示");
     headingButton.setAttribute("aria-pressed", "false");
-
-    zoomOutButton.addEventListener("click", () => {
-      if (!map) return;
-      map.setZoom(Math.max(2, (map.getZoom() || 12) - 1));
-      showStatus("地図を縮小しました", true);
-    });
-
-    zoomInButton.addEventListener("click", () => {
-      if (!map) return;
-      map.setZoom(Math.min(21, (map.getZoom() || 12) + 1));
-      showStatus("地図を拡大しました", true);
-    });
 
     headingButton.addEventListener("click", () => {
       if (!map) return;
@@ -3350,7 +3313,7 @@ followToggle.checked = true;
       }
     });
 
-    controls.append(zoomOutButton, zoomInButton, headingButton);
+    controls.append(headingButton);
     document.body.appendChild(controls);
   }
 
@@ -3359,6 +3322,7 @@ followToggle.checked = true;
       map = new google.maps.Map($("map"), {
         center: DEFAULT_CENTER,
         zoom: 12,
+        zoomControl: false,
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
@@ -3423,7 +3387,7 @@ followToggle.checked = true;
 
       trafficLayer = new google.maps.TrafficLayer();
       createNavigationInfoPanel();
-      createZoomButtons();
+      createHeadingButton();
 
       showStatus("Ride Navi 2.3.1 β を読み込みました", true);
       startGps();
