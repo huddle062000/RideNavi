@@ -699,7 +699,7 @@ function drawRouteOverlays() {
     });
 
     const routePath = route.overview_path || [];
-    const labelFractions = [0.42, 0.5, 0.58];
+    const labelFractions = [0.42, 0.5, 0.36];
     const labelPosition = routePath[
       Math.round((routePath.length - 1) * (labelFractions[index] || 0.5))
     ];
