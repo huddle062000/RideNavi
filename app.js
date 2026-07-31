@@ -378,27 +378,45 @@
     };
   }
 
-  function isPartialTollRoute(route, freeRouteDuration) {
+  function routeModeAssessment(route, mode, freeRouteDuration) {
     const tollUsage = routeTollUsage(route);
     const duration = sumRouteTotals(route).totalDuration;
+    const rejectionReasons = [];
 
-    return (
-      Number.isFinite(freeRouteDuration) &&
-      tollUsage.hasToll &&
-      tollUsage.tollDistanceRatio > 0 &&
-      tollUsage.tollDistanceRatio <= PARTIAL_TOLL_MAX_DISTANCE_RATIO &&
-      duration < freeRouteDuration
-    );
+    if (mode === "local") {
+      if (tollUsage.hasToll) rejectionReasons.push("有料区間を検出");
+    } else if (mode === "partial") {
+      if (!Number.isFinite(freeRouteDuration)) {
+        rejectionReasons.push("無料ルートの所要時間を取得できず");
+      }
+      if (!tollUsage.hasToll || tollUsage.tollDistanceRatio <= 0) {
+        rejectionReasons.push("有料区間を特定できず");
+      }
+      if (tollUsage.tollDistanceRatio > PARTIAL_TOLL_MAX_DISTANCE_RATIO) {
+        rejectionReasons.push("有料区間50％超過");
+      }
+      if (
+        Number.isFinite(freeRouteDuration) &&
+        duration >= freeRouteDuration
+      ) {
+        rejectionReasons.push("無料ルートより早くない");
+      }
+    } else if (!tollUsage.hasPaidExpressway) {
+      rejectionReasons.push("有料高速道路を特定できず");
+    }
+
+    return {
+      accepted: rejectionReasons.length === 0,
+      rejectionReasons,
+      tollUsage,
+      freeDurationRatio: Number.isFinite(freeRouteDuration)
+        ? duration / Math.max(freeRouteDuration, 1)
+        : null
+    };
   }
 
   function routeMatchesMode(route, mode, freeRouteDuration) {
-    const tollUsage = routeTollUsage(route);
-
-    if (mode === "local") return !tollUsage.hasToll;
-    if (mode === "partial") {
-      return isPartialTollRoute(route, freeRouteDuration);
-    }
-    return tollUsage.hasPaidExpressway;
+    return routeModeAssessment(route, mode, freeRouteDuration).accepted;
   }
 
   function stepPathSummary(path) {
@@ -1257,6 +1275,10 @@ function drawRouteOverlays() {
         diagnostics.practicalityLoopExcludedCount,
       実用性判定時間超過除外数:
         diagnostics.practicalityDurationExcludedCount,
+      追加検索実行: diagnostics.automaticSearchExecuted,
+      追加検索判定理由: diagnostics.automaticSearchReason,
+      追加検索前候補数: diagnostics.automaticSearchInitialCandidateCount,
+      追加予定数: diagnostics.automaticSearchNeededCount,
       自動通過点検索数: diagnostics.generatedViaRequestCount,
       最終採用数: diagnostics.finalAcceptedCount
     };
@@ -1265,6 +1287,10 @@ function drawRouteOverlays() {
       `[Ride Navi] ルート検索診断 #${diagnostics.searchId}`
     );
     console.log(summary);
+    if (diagnostics.generatedViaPoints.length) {
+      console.info("[Ride Navi] 自動通過点候補");
+      console.table?.(diagnostics.generatedViaPoints);
+    }
     console.table?.(diagnostics.candidates);
     console.groupEnd?.();
   }
@@ -2280,7 +2306,12 @@ followToggle.checked = true;
       practicalityDeviationExcludedCount: 0,
       practicalityLoopExcludedCount: 0,
       practicalityDurationExcludedCount: 0,
+      automaticSearchExecuted: false,
+      automaticSearchReason: "未判定",
+      automaticSearchInitialCandidateCount: 0,
+      automaticSearchNeededCount: 0,
       generatedViaRequestCount: 0,
+      generatedViaPoints: [],
       finalAcceptedCount: 0,
       candidates: []
     };
@@ -2297,6 +2328,10 @@ followToggle.checked = true;
       if (cachedCandidates) {
         if (searchId !== latestRouteSearchId) return;
 
+        diagnostics.automaticSearchReason = "条件別キャッシュを使用";
+        diagnostics.automaticSearchInitialCandidateCount =
+          cachedCandidates.length;
+        diagnostics.automaticSearchNeededCount = 0;
         diagnostics.finalAcceptedCount = cachedCandidates.length;
         showRouteChoices(cachedCandidates, searchId);
         closePanel();
@@ -2338,6 +2373,11 @@ followToggle.checked = true;
       ) => {
         const route = candidate.result.routes[candidate.routeIndex];
         const totals = sumRouteTotals(route);
+        const modeAssessment = routeModeAssessment(
+          route,
+          candidate.mode,
+          freeRouteDuration
+        );
         const record = {
           取得元: source,
           モード: routeModeLabel(candidate.mode),
@@ -2345,6 +2385,14 @@ followToggle.checked = true;
           自動通過点: viaPointDescription,
           距離km: Number((totals.totalDistance / 1000).toFixed(1)),
           距離倍率: "",
+          "有料区間率％": modeAssessment.tollUsage.hasToll
+            ? Number(
+                (modeAssessment.tollUsage.tollDistanceRatio * 100).toFixed(1)
+              )
+            : 0,
+          無料ルート比時間: modeAssessment.freeDurationRatio === null
+            ? ""
+            : Number(modeAssessment.freeDurationRatio.toFixed(3)),
           時間倍率: practicality
             ? Number(practicality.durationRatio.toFixed(3))
             : "",
@@ -2471,6 +2519,30 @@ followToggle.checked = true;
           if (distanceDifference !== 0) return distanceDifference;
           return compareRoutesDeterministically(first, second);
         })[0] || null;
+      const recordModeRejection = (
+        route,
+        routeIndex,
+        mode,
+        source,
+        assessment
+      ) => {
+        const totals = sumRouteTotals(route);
+
+        diagnostics.candidates.push({
+          取得元: source,
+          モード: routeModeLabel(mode),
+          候補番号: routeIndex + 1,
+          自動通過点: "",
+          距離km: Number((totals.totalDistance / 1000).toFixed(1)),
+          "有料区間率％": assessment.tollUsage.hasToll
+            ? Number((assessment.tollUsage.tollDistanceRatio * 100).toFixed(1))
+            : 0,
+          無料ルート比時間: assessment.freeDurationRatio === null
+            ? ""
+            : Number(assessment.freeDurationRatio.toFixed(3)),
+          判定: `モード条件外：${assessment.rejectionReasons.join("・")}`
+        });
+      };
 
       responses.forEach(({ mode, response }) => {
         const { result, status } = response;
@@ -2493,17 +2565,67 @@ followToggle.checked = true;
           let candidateMode = mode;
 
           if (mode === "local") {
-            if (!routeMatchesMode(route, "local", freeRouteDuration)) return;
+            const assessment = routeModeAssessment(
+              route,
+              "local",
+              freeRouteDuration
+            );
+            if (!assessment.accepted) {
+              recordModeRejection(
+                route,
+                routeIndex,
+                "local",
+                "通常検索",
+                assessment
+              );
+              return;
+            }
           } else if (mode === "partial") {
-            if (!routeMatchesMode(route, "partial", freeRouteDuration)) return;
+            const assessment = routeModeAssessment(
+              route,
+              "partial",
+              freeRouteDuration
+            );
+            if (!assessment.accepted) {
+              recordModeRejection(
+                route,
+                routeIndex,
+                "partial",
+                "通常検索",
+                assessment
+              );
+              return;
+            }
           } else if (route === fastestHighwayRoute) {
             candidateMode = "highway";
-          } else if (
-            routeMatchesMode(route, "partial", freeRouteDuration)
-          ) {
-            candidateMode = "partial";
           } else {
-            return;
+            const partialAssessment = routeModeAssessment(
+              route,
+              "partial",
+              freeRouteDuration
+            );
+            if (partialAssessment.accepted) {
+              candidateMode = "partial";
+            } else {
+              const highwayAssessment = routeModeAssessment(
+                route,
+                "highway",
+                freeRouteDuration
+              );
+              if (highwayAssessment.accepted) {
+                partialAssessment.rejectionReasons.unshift(
+                  "高速優先の最短時間候補ではない"
+                );
+              }
+              recordModeRejection(
+                route,
+                routeIndex,
+                "highway",
+                "通常検索",
+                partialAssessment
+              );
+              return;
+            }
           }
 
           evaluateCandidate(
@@ -2570,8 +2692,23 @@ followToggle.checked = true;
         uniqueCandidates,
         initialShortestDistance
       );
+      const automaticCandidatesNeeded = Math.max(
+        0,
+        3 - reasonableCandidates.length
+      );
 
-      if (reasonableCandidates.length === 2) {
+      diagnostics.automaticSearchInitialCandidateCount =
+        reasonableCandidates.length;
+      diagnostics.automaticSearchNeededCount = automaticCandidatesNeeded;
+
+      if (
+        reasonableCandidates.length > 0 &&
+        automaticCandidatesNeeded > 0
+      ) {
+        diagnostics.automaticSearchExecuted = true;
+        diagnostics.automaticSearchReason =
+          `実用的な候補が${reasonableCandidates.length}本のため、` +
+          `${automaticCandidatesNeeded}本を追加検索`;
         const baseCandidate = reasonableCandidates.reduce(
           (shortestCandidate, candidate) => {
             const shortestDistance = sumRouteTotals(
@@ -2604,6 +2741,17 @@ followToggle.checked = true;
 
             generatedWaypoints.splice(insertionIndex, 0, {
               location: viaPoint.location,
+              stopover: false
+            });
+            diagnostics.generatedViaPoints.push({
+              "基準位置％": Math.round(viaPoint.fraction * 100),
+              左右: viaPoint.side === "left" ? "左" : "右",
+              オフセットkm: Number(
+                (viaPoint.offsetMeters / 1000).toFixed(1)
+              ),
+              緯度: Number(viaPoint.location.lat.toFixed(6)),
+              経度: Number(viaPoint.location.lng.toFixed(6)),
+              挿入位置: insertionIndex + 1,
               stopover: false
             });
 
@@ -2646,16 +2794,18 @@ followToggle.checked = true;
               `${Math.round(viaPoint.offsetMeters / 1000)}km`;
             const automaticPracticality =
               evaluateRoutePracticality(route, baseRoute);
-            const matchesSelectedMode = routeMatchesMode(
+            const modeAssessment = routeModeAssessment(
               route,
               selectedPreference,
               freeRouteDuration
             );
 
-            if (!matchesSelectedMode) {
+            if (!modeAssessment.accepted) {
               automaticPracticality.accepted = false;
               automaticPracticality.rejectionReasons.push(
-                `${routeModeLabel(selectedPreference)}条件外`
+                ...modeAssessment.rejectionReasons.map(
+                  (reason) => `${routeModeLabel(selectedPreference)}：${reason}`
+                )
               );
             }
 
@@ -2755,33 +2905,49 @@ followToggle.checked = true;
             );
           });
 
-          if (
-            practicalExistingCandidates.length === 2 &&
-            practicalGeneratedCandidates.length
-          ) {
-            const selectedGeneratedCandidate =
-              practicalGeneratedCandidates[0];
+          const additionalCandidateCount = Math.max(
+            0,
+            3 - practicalExistingCandidates.length
+          );
+          const selectedGeneratedCandidates =
+            practicalGeneratedCandidates.slice(0, additionalCandidateCount);
 
-            practicalGeneratedCandidates.slice(1).forEach((candidate) => {
-              const record = candidateRecords.get(candidate);
-              if (record) record.判定 = "自動候補不採用";
-            });
+          if (selectedGeneratedCandidates.length) {
+            practicalGeneratedCandidates
+              .slice(selectedGeneratedCandidates.length)
+              .forEach((candidate) => {
+                const record = candidateRecords.get(candidate);
+                if (record) record.判定 = "自動候補不採用";
+              });
 
             reasonableCandidates = [
               ...practicalExistingCandidates,
-              selectedGeneratedCandidate
+              ...selectedGeneratedCandidates
             ];
-            const selectedRecord = candidateRecords.get(
-              selectedGeneratedCandidate
-            );
-            if (selectedRecord) selectedRecord.判定 = "3本目に採用";
+            selectedGeneratedCandidates.forEach((candidate, index) => {
+              const selectedRecord = candidateRecords.get(candidate);
+              if (selectedRecord) {
+                selectedRecord.判定 =
+                  `${practicalExistingCandidates.length + index + 1}本目に採用`;
+              }
+            });
+            diagnostics.automaticSearchReason +=
+              `（${selectedGeneratedCandidates.length}本採用）`;
           } else {
             practicalGeneratedCandidates.forEach((candidate) => {
               const record = candidateRecords.get(candidate);
               if (record) record.判定 = "自動候補不採用";
             });
+            diagnostics.automaticSearchReason += "（合格候補なし）";
           }
+        } else {
+          diagnostics.automaticSearchReason += "（取得候補なし）";
         }
+      } else {
+        diagnostics.automaticSearchReason =
+          reasonableCandidates.length >= 3
+            ? "候補が3本以上あるため追加検索不要"
+            : "基準にできる候補がないため追加検索不可";
       }
 
       const preferredMode = selectedPreference;
