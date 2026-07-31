@@ -139,6 +139,7 @@
   let routePolylines = [];
   let routeLabelMarkers = [];
   const routeSearchCache = new Map();
+  const mobileRouteDisplayQuery = window.matchMedia("(max-width: 480px)");
 
   function showStatus(message, autoHide = false) {
     if (!statusEl) return;
@@ -801,6 +802,8 @@ function drawRouteOverlays() {
       routePolyline.addListener("click", selectRoute);
       routePolylines.push(routePolyline);
     });
+
+    if (mobileRouteDisplayQuery.matches && !isSelected) return;
 
     const midpoint = routeMidpoint(route);
     if (!midpoint) return;
@@ -3560,6 +3563,10 @@ followToggle.checked = true;
   });
 
   destinationInput?.addEventListener("input", updateRouteEndpointsSummary);
+
+  mobileRouteDisplayQuery.addEventListener?.("change", () => {
+    if (routeCandidates.length) drawRouteOverlays();
+  });
 
   createNavigationButton();
   createShareButton();
