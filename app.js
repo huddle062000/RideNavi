@@ -174,7 +174,7 @@ function createRouteLabelOverlay(position, text, isSelected, onClick) {
     }
   }
 
-  const overlay = new RouteLabelOverlay();
+  const overlay = new RouteLabelOverlay(position, text, isSelected, onClick);
   overlay.setMap(map);
   return overlay;
 }
@@ -205,9 +205,9 @@ function drawRouteOverlays() {
     const routePolyline = new google.maps.Polyline({
       map,
       path: route.overview_path,
-      strokeColor: isSelected ? "#1a73e8" : "#5f6b76",
+      strokeColor: ["#1565C0", "#1E88E5", "#64B5F6"][index] || "#64B5F6",
       strokeOpacity: 1,
-      strokeWeight: isSelected ? 8 : 7,
+    strokeWeight: isSelected ? 9 : 8,
       zIndex: isSelected ? 100 : 30 + index,
       clickable: true
     });
