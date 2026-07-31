@@ -95,6 +95,7 @@
   let accuracyCircle = null;
   let statusTimer = null;
   let routeSearching = false;
+  let latestRouteSearchId = 0;
   let routeChoicePanel = null;
   let selectedRouteIndex = 0;
   let routeCandidates = [];
@@ -1344,11 +1345,11 @@ followToggle.checked = true;
       stopover: true
     }));
 
+    const searchId = ++latestRouteSearchId;
     routeSearching = true;
     routeButton.disabled = true;
     routeButton.textContent = "3種類を検索中…";
     showStatus("高速優先・無料高速OK・一般道を比較しています…");
-    hideRouteChoices();
 
     try {
       const selectedPreference =
@@ -1368,6 +1369,8 @@ const modes =
           )
         }))
       );
+
+      if (searchId !== latestRouteSearchId) return;
 
       const candidates = [];
       const seen = new Set();
@@ -1399,6 +1402,17 @@ const modes =
           candidates.push({ mode, result, routeIndex });
         }
       });
+
+      const hasFailedResponse = responses.some(({ response }) =>
+        response.status !== "OK" || !response.result?.routes?.length
+      );
+
+      if (hasFailedResponse && routeCandidates.length) {
+        showStatus(
+          "一部のルート候補を取得できなかったため、現在の表示を維持しました"
+        );
+        return;
+      }
 
       if (!candidates.length) {
         const firstError = responses.find(
@@ -1438,16 +1452,22 @@ const modes =
         return aTotals.totalDuration - bTotals.totalDuration;
       });
 
+      if (searchId !== latestRouteSearchId) return;
+
       showRouteChoices(reasonableCandidates);
       closePanel();
       showStatus(`${reasonableCandidates.length}件のルート候補が見つかりました`, true);
     } catch (error) {
+      if (searchId !== latestRouteSearchId) return;
+
       console.error("Directions route error:", error);
       showStatus("ルート候補の検索に失敗しました");
     } finally {
-      routeSearching = false;
-      routeButton.disabled = false;
-      routeButton.textContent = "🧭 3種類のルートを比較";
+      if (searchId === latestRouteSearchId) {
+        routeSearching = false;
+        routeButton.disabled = false;
+        routeButton.textContent = "🧭 3種類のルートを比較";
+      }
     }
   }
 
