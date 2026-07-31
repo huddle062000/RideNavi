@@ -3,6 +3,10 @@
 
   const DEFAULT_CENTER = { lat: 35.0116, lng: 135.7681 };
   const MAX_WAYPOINTS = 5;
+  const AUTO_ROUTE_FRACTIONS = [0.35, 0.5, 0.65];
+  const AUTO_ROUTE_MIN_OFFSET_METERS = 1500;
+  const AUTO_ROUTE_MAX_OFFSET_METERS = 12000;
+  const AUTO_ROUTE_OFFSET_RATIO = 0.08;
   const HIGHWAY_GUIDANCE_PATTERNS = {
     road: [
       /高速道路/,
@@ -366,6 +370,159 @@ function drawRouteOverlays() {
     }));
   }
 
+  function routePointAtFraction(route, fraction) {
+    const path = routeOverviewPoints(route);
+    if (path.length < 2) return null;
+
+    const segmentDistances = [];
+    let pathDistance = 0;
+
+    for (let index = 0; index < path.length - 1; index += 1) {
+      const segmentDistance = distanceBetweenMeters(path[index], path[index + 1]);
+      segmentDistances.push(segmentDistance);
+      pathDistance += segmentDistance;
+    }
+
+    if (pathDistance <= 0) return null;
+
+    const targetDistance = pathDistance * fraction;
+    let traveledDistance = 0;
+
+    for (let index = 0; index < segmentDistances.length; index += 1) {
+      const segmentDistance = segmentDistances[index];
+      if (
+        traveledDistance + segmentDistance < targetDistance &&
+        index < segmentDistances.length - 1
+      ) {
+        traveledDistance += segmentDistance;
+        continue;
+      }
+
+      const segmentRatio = segmentDistance > 0
+        ? Math.max(
+            0,
+            Math.min(1, (targetDistance - traveledDistance) / segmentDistance)
+          )
+        : 0;
+      const segmentStart = path[index];
+      const segmentEnd = path[index + 1];
+
+      return {
+        point: {
+          lat:
+            segmentStart.lat +
+            (segmentEnd.lat - segmentStart.lat) * segmentRatio,
+          lng:
+            segmentStart.lng +
+            (segmentEnd.lng - segmentStart.lng) * segmentRatio
+        },
+        segmentStart,
+        segmentEnd
+      };
+    }
+
+    return null;
+  }
+
+  function offsetPointFromRoute(sample, offsetMeters, side) {
+    const meanLatitude =
+      ((sample.segmentStart.lat + sample.segmentEnd.lat) / 2) *
+      Math.PI /
+      180;
+    const eastMeters =
+      (sample.segmentEnd.lng - sample.segmentStart.lng) *
+      111320 *
+      Math.cos(meanLatitude);
+    const northMeters =
+      (sample.segmentEnd.lat - sample.segmentStart.lat) * 111320;
+    const segmentLength = Math.hypot(eastMeters, northMeters);
+
+    if (segmentLength < 1) return null;
+
+    const sideDirection = side === "left" ? 1 : -1;
+    const offsetEast =
+      (-northMeters / segmentLength) * offsetMeters * sideDirection;
+    const offsetNorth =
+      (eastMeters / segmentLength) * offsetMeters * sideDirection;
+    const longitudeScale =
+      111320 * Math.max(0.1, Math.cos(sample.point.lat * Math.PI / 180));
+
+    return {
+      lat: sample.point.lat + offsetNorth / 111320,
+      lng: sample.point.lng + offsetEast / longitudeScale
+    };
+  }
+
+  function createAutomaticViaPoints(route, totalDistance) {
+    const offsetMeters = Math.max(
+      AUTO_ROUTE_MIN_OFFSET_METERS,
+      Math.min(
+        AUTO_ROUTE_MAX_OFFSET_METERS,
+        totalDistance * AUTO_ROUTE_OFFSET_RATIO
+      )
+    );
+    const viaPoints = [];
+
+    AUTO_ROUTE_FRACTIONS.forEach((fraction) => {
+      const sample = routePointAtFraction(route, fraction);
+      if (!sample) return;
+
+      ["left", "right"].forEach((side) => {
+        const location = offsetPointFromRoute(sample, offsetMeters, side);
+        if (!location) return;
+
+        viaPoints.push({
+          fraction,
+          side,
+          offsetMeters,
+          location
+        });
+      });
+    });
+
+    return viaPoints;
+  }
+
+  function routeLegPathPoints(leg) {
+    const path = [];
+
+    leg?.steps?.forEach((step) => {
+      step.path?.forEach((point) => {
+        path.push({
+          lat: point.lat(),
+          lng: point.lng()
+        });
+      });
+    });
+
+    if (path.length >= 2) return path;
+
+    return [leg?.start_location, leg?.end_location]
+      .filter(Boolean)
+      .map((point) => ({
+        lat: point.lat(),
+        lng: point.lng()
+      }));
+  }
+
+  function nearestRouteLegIndex(route, point) {
+    let nearestIndex = 0;
+    let nearestDistance = Infinity;
+
+    route?.legs?.forEach((leg, index) => {
+      const path = routeLegPathPoints(leg);
+      if (path.length < 2) return;
+
+      const distance = minimumDistanceToPathMeters(point, path);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    return nearestIndex;
+  }
+
   function minimumDistanceToPathMeters(point, path) {
     let minimumDistance = Infinity;
 
@@ -400,24 +557,65 @@ function drawRouteOverlays() {
     return nearbyPointCount / sampleCount;
   }
 
-  function routesHaveNearlySameShape(firstRoute, secondRoute) {
+  function compareRouteShapes(firstRoute, secondRoute) {
     const firstPath = routeOverviewPoints(firstRoute);
     const secondPath = routeOverviewPoints(secondRoute);
 
-    if (firstPath.length < 2 || secondPath.length < 2) return false;
+    if (firstPath.length < 2 || secondPath.length < 2) {
+      return {
+        firstCoverage: 0,
+        secondCoverage: 0,
+        overlapRatio: 0,
+        distanceDifference: Infinity,
+        isNearlySame: false
+      };
+    }
 
     const firstDistance = sumRouteTotals(firstRoute).totalDistance;
     const secondDistance = sumRouteTotals(secondRoute).totalDistance;
     const distanceDifference =
       Math.abs(firstDistance - secondDistance) /
       Math.max(firstDistance, secondDistance, 1);
+    const firstCoverage = routePathCoverage(firstPath, secondPath);
+    const secondCoverage = routePathCoverage(secondPath, firstPath);
 
-    if (distanceDifference > 0.1) return false;
+    return {
+      firstCoverage,
+      secondCoverage,
+      overlapRatio: Math.min(firstCoverage, secondCoverage),
+      distanceDifference,
+      isNearlySame:
+        distanceDifference <= 0.1 &&
+        firstCoverage >= 0.9 &&
+        secondCoverage >= 0.9
+    };
+  }
 
-    return (
-      routePathCoverage(firstPath, secondPath) >= 0.9 &&
-      routePathCoverage(secondPath, firstPath) >= 0.9
+  function routesHaveNearlySameShape(firstRoute, secondRoute) {
+    return compareRouteShapes(firstRoute, secondRoute).isNearlySame;
+  }
+
+  function logRouteSearchDiagnostics(diagnostics) {
+    const summary = {
+      APIリクエスト数: diagnostics.apiRequestCount,
+      API取得数: diagnostics.apiRouteCount,
+      APIエラー数: diagnostics.apiErrorCount,
+      重複除外数:
+        diagnostics.signatureDuplicateCount +
+        diagnostics.shapeDuplicateCount,
+      簡易署名重複数: diagnostics.signatureDuplicateCount,
+      形状重複数: diagnostics.shapeDuplicateCount,
+      距離倍率除外数: diagnostics.distanceExcludedCount,
+      自動通過点検索数: diagnostics.generatedViaRequestCount,
+      最終採用数: diagnostics.finalAcceptedCount
+    };
+
+    console.groupCollapsed?.(
+      `[Ride Navi] ルート検索診断 #${diagnostics.searchId}`
     );
+    console.log(summary);
+    console.table?.(diagnostics.candidates);
+    console.groupEnd?.();
   }
 
   function makeSingleRouteResult(result, routeIndex) {
@@ -1346,6 +1544,18 @@ followToggle.checked = true;
     }));
 
     const searchId = ++latestRouteSearchId;
+    const diagnostics = {
+      searchId,
+      apiRequestCount: 0,
+      apiRouteCount: 0,
+      apiErrorCount: 0,
+      signatureDuplicateCount: 0,
+      shapeDuplicateCount: 0,
+      distanceExcludedCount: 0,
+      generatedViaRequestCount: 0,
+      finalAcceptedCount: 0,
+      candidates: []
+    };
     routeSearching = true;
     routeButton.disabled = true;
     routeButton.textContent = "3種類を検索中…";
@@ -1353,14 +1563,16 @@ followToggle.checked = true;
 
     try {
       const selectedPreference =
-  document.getElementById("routeMode")?.value || "highway";
+        document.getElementById("routeMode")?.value || "highway";
 
-const modes =
-  selectedPreference === "local"
-    ? ["local"]
-    : selectedPreference === "partial"
-      ? ["partial", "local"]
-      : ["highway", "partial", "local"];
+      const modes =
+        selectedPreference === "local"
+          ? ["local"]
+          : selectedPreference === "partial"
+            ? ["partial", "local"]
+            : ["highway", "partial", "local"];
+      diagnostics.apiRequestCount += modes.length;
+
       const responses = await Promise.all(
         modes.map(async (mode) => ({
           mode,
@@ -1372,35 +1584,85 @@ const modes =
 
       if (searchId !== latestRouteSearchId) return;
 
-      const candidates = [];
-      const seen = new Set();
+      const uniqueCandidates = [];
+      const seenSignatures = new Map();
+      const candidateRecords = new Map();
+
+      const evaluateCandidate = (
+        candidate,
+        source,
+        viaPointDescription = ""
+      ) => {
+        const route = candidate.result.routes[candidate.routeIndex];
+        const totals = sumRouteTotals(route);
+        const record = {
+          取得元: source,
+          モード: routeModeLabel(candidate.mode),
+          候補番号: candidate.routeIndex + 1,
+          自動通過点: viaPointDescription,
+          距離km: Number((totals.totalDistance / 1000).toFixed(1)),
+          距離倍率: "",
+          最大形状重複率: "",
+          形状差: "",
+          判定: "評価中"
+        };
+
+        diagnostics.candidates.push(record);
+        candidateRecords.set(candidate, record);
+
+        const signature = routeSignature(route);
+        if (seenSignatures.has(signature)) {
+          diagnostics.signatureDuplicateCount += 1;
+          record.判定 = "簡易署名重複";
+          return false;
+        }
+
+        let maximumOverlap = 0;
+        let shapeDuplicate = false;
+
+        for (const existingCandidate of uniqueCandidates) {
+          const existingRoute =
+            existingCandidate.result.routes[existingCandidate.routeIndex];
+          const comparison = compareRouteShapes(route, existingRoute);
+
+          maximumOverlap = Math.max(
+            maximumOverlap,
+            comparison.overlapRatio
+          );
+
+          if (comparison.isNearlySame) {
+            shapeDuplicate = true;
+            break;
+          }
+        }
+
+        record.最大形状重複率 = Number((maximumOverlap * 100).toFixed(1));
+
+        if (shapeDuplicate) {
+          diagnostics.shapeDuplicateCount += 1;
+          record.判定 = "形状重複";
+          return false;
+        }
+
+        seenSignatures.set(signature, candidate);
+        uniqueCandidates.push(candidate);
+        return true;
+      };
 
       responses.forEach(({ mode, response }) => {
         const { result, status } = response;
-        if (status !== "OK" || !result?.routes?.length) return;
-
-       const routeLimit = waypoints.length
-  ? 1
-  : Math.min(
-      selectedPreference === "local" && mode === "local" ? 3 : 2,
-      result.routes.length
-    );
-
-        for (let routeIndex = 0; routeIndex < routeLimit; routeIndex += 1) {
-          const route = result.routes[routeIndex];
-          const signature = routeSignature(route);
-          const hasNearlySameRoute = candidates.some((candidate) =>
-            routesHaveNearlySameShape(
-              route,
-              candidate.result.routes[candidate.routeIndex]
-            )
-          );
-
-          if (seen.has(signature) || hasNearlySameRoute) continue;
-
-          seen.add(signature);
-          candidates.push({ mode, result, routeIndex });
+        if (status !== "OK" || !result?.routes?.length) {
+          diagnostics.apiErrorCount += 1;
+          return;
         }
+
+        diagnostics.apiRouteCount += result.routes.length;
+        result.routes.forEach((route, routeIndex) => {
+          evaluateCandidate(
+            { mode, result, routeIndex },
+            "通常検索"
+          );
+        });
       });
 
       const hasFailedResponse = responses.some(({ response }) =>
@@ -1414,7 +1676,7 @@ const modes =
         return;
       }
 
-      if (!candidates.length) {
+      if (!uniqueCandidates.length) {
         const firstError = responses.find(
           ({ response }) => response.status !== "OK"
         )?.response.status;
@@ -1422,16 +1684,230 @@ const modes =
         return;
       }
 
-      const shortestDistance = Math.min(
-        ...candidates.map((candidate) =>
+      const filterCandidatesByDistance = (candidates, shortestDistance) =>
+        candidates.filter((candidate) => {
+          const route =
+            candidate.result.routes[candidate.routeIndex];
+          const distance = sumRouteTotals(route).totalDistance;
+          const distanceRatio = distance / Math.max(shortestDistance, 1);
+          const record = candidateRecords.get(candidate);
+
+          if (record) {
+            record.距離倍率 = Number(distanceRatio.toFixed(3));
+          }
+
+          if (distanceRatio > 1.5) {
+            if (record?.判定 !== "距離超過") {
+              diagnostics.distanceExcludedCount += 1;
+            }
+            if (record) record.判定 = "距離超過";
+            return false;
+          }
+
+          if (record) record.判定 = "採用候補";
+          return true;
+        });
+
+      const initialShortestDistance = Math.min(
+        ...uniqueCandidates.map((candidate) =>
           sumRouteTotals(candidate.result.routes[candidate.routeIndex])
             .totalDistance
         )
       );
-      const reasonableCandidates = candidates.filter((candidate) =>
-        sumRouteTotals(candidate.result.routes[candidate.routeIndex])
-          .totalDistance <= shortestDistance * 1.5
+      let reasonableCandidates = filterCandidatesByDistance(
+        uniqueCandidates,
+        initialShortestDistance
       );
+
+      if (reasonableCandidates.length === 2) {
+        const baseCandidate = reasonableCandidates.reduce(
+          (shortestCandidate, candidate) => {
+            const shortestDistance = sumRouteTotals(
+              shortestCandidate.result.routes[shortestCandidate.routeIndex]
+            ).totalDistance;
+            const candidateDistance = sumRouteTotals(
+              candidate.result.routes[candidate.routeIndex]
+            ).totalDistance;
+
+            return candidateDistance < shortestDistance
+              ? candidate
+              : shortestCandidate;
+          }
+        );
+        const baseRoute =
+          baseCandidate.result.routes[baseCandidate.routeIndex];
+        const baseDistance = sumRouteTotals(baseRoute).totalDistance;
+        const viaPoints = createAutomaticViaPoints(baseRoute, baseDistance);
+
+        diagnostics.generatedViaRequestCount = viaPoints.length;
+        diagnostics.apiRequestCount += viaPoints.length;
+
+        const generatedResponses = await Promise.all(
+          viaPoints.map(async (viaPoint) => {
+            const insertionIndex = Math.min(
+              waypoints.length,
+              nearestRouteLegIndex(baseRoute, viaPoint.location)
+            );
+            const generatedWaypoints = [...waypoints];
+
+            generatedWaypoints.splice(insertionIndex, 0, {
+              location: viaPoint.location,
+              stopover: false
+            });
+
+            return {
+              viaPoint,
+              response: await directionsPromise(
+                routeRequest(
+                  origin,
+                  destinationText,
+                  generatedWaypoints,
+                  selectedPreference
+                )
+              )
+            };
+          })
+        );
+
+        if (searchId !== latestRouteSearchId) return;
+
+        const generatedCandidates = [];
+
+        generatedResponses.forEach(({ viaPoint, response }) => {
+          const { result, status } = response;
+          if (status !== "OK" || !result?.routes?.length) {
+            diagnostics.apiErrorCount += 1;
+            return;
+          }
+
+          diagnostics.apiRouteCount += result.routes.length;
+          result.routes.forEach((route, routeIndex) => {
+            const candidate = {
+              mode: selectedPreference,
+              result,
+              routeIndex
+            };
+            const viaPointDescription =
+              `${Math.round(viaPoint.fraction * 100)}%・` +
+              `${viaPoint.side === "left" ? "左" : "右"}・` +
+              `${Math.round(viaPoint.offsetMeters / 1000)}km`;
+
+            if (
+              evaluateCandidate(
+                candidate,
+                "自動通過点",
+                viaPointDescription
+              )
+            ) {
+              generatedCandidates.push(candidate);
+            }
+          });
+        });
+
+        if (generatedCandidates.length) {
+          const combinedCandidates = [
+            ...reasonableCandidates,
+            ...generatedCandidates
+          ];
+          const combinedShortestDistance = Math.min(
+            ...combinedCandidates.map((candidate) =>
+              sumRouteTotals(
+                candidate.result.routes[candidate.routeIndex]
+              ).totalDistance
+            )
+          );
+          const practicalCandidates = filterCandidatesByDistance(
+            combinedCandidates,
+            combinedShortestDistance
+          );
+          const existingCandidateSet = new Set(reasonableCandidates);
+          const practicalExistingCandidates = practicalCandidates.filter(
+            (candidate) => existingCandidateSet.has(candidate)
+          );
+          const practicalGeneratedCandidates = practicalCandidates.filter(
+            (candidate) => !existingCandidateSet.has(candidate)
+          );
+
+          practicalGeneratedCandidates.forEach((candidate) => {
+            const route =
+              candidate.result.routes[candidate.routeIndex];
+            const maximumOverlap = practicalExistingCandidates.length
+              ? Math.max(
+                  ...practicalExistingCandidates.map((existingCandidate) => {
+                    const existingRoute =
+                      existingCandidate.result.routes[
+                        existingCandidate.routeIndex
+                      ];
+                    return compareRouteShapes(
+                      route,
+                      existingRoute
+                    ).overlapRatio;
+                  })
+                )
+              : 1;
+            const record = candidateRecords.get(candidate);
+
+            candidate.shapeDifference = 1 - maximumOverlap;
+            if (record) {
+              record.形状差 = Number(
+                (candidate.shapeDifference * 100).toFixed(1)
+              );
+              record.最大形状重複率 = Number(
+                (maximumOverlap * 100).toFixed(1)
+              );
+              record.判定 = "自動候補合格";
+            }
+          });
+
+          practicalGeneratedCandidates.sort((first, second) => {
+            const shapeDifference =
+              (second.shapeDifference || 0) -
+              (first.shapeDifference || 0);
+            if (Math.abs(shapeDifference) > 0.001) {
+              return shapeDifference;
+            }
+
+            const firstTotals = sumRouteTotals(
+              first.result.routes[first.routeIndex]
+            );
+            const secondTotals = sumRouteTotals(
+              second.result.routes[second.routeIndex]
+            );
+            const distanceDifference =
+              firstTotals.totalDistance - secondTotals.totalDistance;
+
+            if (distanceDifference !== 0) return distanceDifference;
+            return firstTotals.totalDuration - secondTotals.totalDuration;
+          });
+
+          if (
+            practicalExistingCandidates.length === 2 &&
+            practicalGeneratedCandidates.length
+          ) {
+            const selectedGeneratedCandidate =
+              practicalGeneratedCandidates[0];
+
+            practicalGeneratedCandidates.slice(1).forEach((candidate) => {
+              const record = candidateRecords.get(candidate);
+              if (record) record.判定 = "自動候補不採用";
+            });
+
+            reasonableCandidates = [
+              ...practicalExistingCandidates,
+              selectedGeneratedCandidate
+            ];
+            const selectedRecord = candidateRecords.get(
+              selectedGeneratedCandidate
+            );
+            if (selectedRecord) selectedRecord.判定 = "3本目に採用";
+          } else {
+            practicalGeneratedCandidates.forEach((candidate) => {
+              const record = candidateRecords.get(candidate);
+              if (record) record.判定 = "自動候補不採用";
+            });
+          }
+        }
+      }
 
       const preferredMode =
         document.getElementById("routeMode")?.value || "highway";
@@ -1454,6 +1930,7 @@ const modes =
 
       if (searchId !== latestRouteSearchId) return;
 
+      diagnostics.finalAcceptedCount = reasonableCandidates.length;
       showRouteChoices(reasonableCandidates);
       closePanel();
       showStatus(`${reasonableCandidates.length}件のルート候補が見つかりました`, true);
@@ -1463,6 +1940,8 @@ const modes =
       console.error("Directions route error:", error);
       showStatus("ルート候補の検索に失敗しました");
     } finally {
+      logRouteSearchDiagnostics(diagnostics);
+
       if (searchId === latestRouteSearchId) {
         routeSearching = false;
         routeButton.disabled = false;
