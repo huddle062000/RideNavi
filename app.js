@@ -260,6 +260,67 @@ function drawRouteOverlays() {
     ].join("|");
   }
 
+  function routeOverviewPoints(route) {
+    return (route?.overview_path || []).map((point) => ({
+      lat: point.lat(),
+      lng: point.lng()
+    }));
+  }
+
+  function minimumDistanceToPathMeters(point, path) {
+    let minimumDistance = Infinity;
+
+    for (let index = 0; index < path.length - 1; index += 1) {
+      minimumDistance = Math.min(
+        minimumDistance,
+        distancePointToSegmentMeters(point, path[index], path[index + 1])
+      );
+    }
+
+    return minimumDistance;
+  }
+
+  function routePathCoverage(sourcePath, targetPath) {
+    const sampleCount = Math.min(60, sourcePath.length);
+    let nearbyPointCount = 0;
+
+    for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+      const sourceIndex = Math.round(
+        sampleIndex * (sourcePath.length - 1) / Math.max(1, sampleCount - 1)
+      );
+      const distance = minimumDistanceToPathMeters(
+        sourcePath[sourceIndex],
+        targetPath
+      );
+
+      if (distance <= 80) {
+        nearbyPointCount += 1;
+      }
+    }
+
+    return nearbyPointCount / sampleCount;
+  }
+
+  function routesHaveNearlySameShape(firstRoute, secondRoute) {
+    const firstPath = routeOverviewPoints(firstRoute);
+    const secondPath = routeOverviewPoints(secondRoute);
+
+    if (firstPath.length < 2 || secondPath.length < 2) return false;
+
+    const firstDistance = sumRouteTotals(firstRoute).totalDistance;
+    const secondDistance = sumRouteTotals(secondRoute).totalDistance;
+    const distanceDifference =
+      Math.abs(firstDistance - secondDistance) /
+      Math.max(firstDistance, secondDistance, 1);
+
+    if (distanceDifference > 0.1) return false;
+
+    return (
+      routePathCoverage(firstPath, secondPath) >= 0.9 &&
+      routePathCoverage(secondPath, firstPath) >= 0.9
+    );
+  }
+
   function makeSingleRouteResult(result, routeIndex) {
     return {
       ...result,
@@ -1225,7 +1286,14 @@ const modes =
         for (let routeIndex = 0; routeIndex < routeLimit; routeIndex += 1) {
           const route = result.routes[routeIndex];
           const signature = routeSignature(route);
-          if (seen.has(signature)) continue;
+          const hasNearlySameRoute = candidates.some((candidate) =>
+            routesHaveNearlySameShape(
+              route,
+              candidate.result.routes[candidate.routeIndex]
+            )
+          );
+
+          if (seen.has(signature) || hasNearlySameRoute) continue;
 
           seen.add(signature);
           candidates.push({ mode, result, routeIndex });
