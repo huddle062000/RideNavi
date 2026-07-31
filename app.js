@@ -61,6 +61,12 @@
   ];
   const PARTIAL_TOLL_MAX_DISTANCE_RATIO = 0.5;
   const MAX_UNNAMED_ACTIVE_ROAD_STEPS = 1;
+  const CURRENT_LOCATION_CACHE_PRECISION = 3;
+  const BIWAKO_BRIDGE_VIA_POINT = {
+    lat: 35.120902,
+    lng: 135.935418
+  };
+  const BIWAKO_BRIDGE_SEARCH_DISTANCE_METERS = 30000;
 
   const config = window.RIDE_NAVI_CONFIG || {};
   const apiKey = String(config.GOOGLE_MAPS_API_KEY || "").trim();
@@ -378,9 +384,25 @@
     };
   }
 
-  function routeModeAssessment(route, mode, freeRouteDuration) {
+  function routeUsesBiwakoBridge(route) {
+    return Boolean(
+      route?.legs?.some((leg) =>
+        leg.steps?.some((step) =>
+          /琵琶湖大橋/.test(stripHtmlInstruction(step.instructions || ""))
+        )
+      )
+    );
+  }
+
+  function routeModeAssessment(
+    route,
+    mode,
+    freeRouteDuration,
+    { allowNotFaster = false } = {}
+  ) {
     const tollUsage = routeTollUsage(route);
     const duration = sumRouteTotals(route).totalDuration;
+    const usesBiwakoBridge = routeUsesBiwakoBridge(route);
     const rejectionReasons = [];
 
     if (mode === "local") {
@@ -397,7 +419,9 @@
       }
       if (
         Number.isFinite(freeRouteDuration) &&
-        duration >= freeRouteDuration
+        duration >= freeRouteDuration &&
+        !usesBiwakoBridge &&
+        !allowNotFaster
       ) {
         rejectionReasons.push("無料ルートより早くない");
       }
@@ -409,6 +433,7 @@
       accepted: rejectionReasons.length === 0,
       rejectionReasons,
       tollUsage,
+      usesBiwakoBridge,
       freeDurationRatio: Number.isFinite(freeRouteDuration)
         ? duration / Math.max(freeRouteDuration, 1)
         : null
@@ -941,6 +966,40 @@ function drawRouteOverlays() {
     return viaPoints;
   }
 
+  function createBiwakoBridgeViaPoint(route) {
+    const routePath = routeOverviewPoints(route);
+
+    if (routePath.length < 2) return null;
+    if (
+      minimumDistanceToPathMeters(
+        BIWAKO_BRIDGE_VIA_POINT,
+        routePath
+      ) > BIWAKO_BRIDGE_SEARCH_DISTANCE_METERS
+    ) {
+      return null;
+    }
+
+    return {
+      kind: "biwako-bridge",
+      label: "琵琶湖大橋固定点",
+      fraction: 0.5,
+      side: "fixed",
+      offsetMeters: 0,
+      location: { ...BIWAKO_BRIDGE_VIA_POINT }
+    };
+  }
+
+  function createAdditionalViaPoints(route, totalDistance, mode) {
+    const automaticViaPoints = createAutomaticViaPoints(route, totalDistance);
+
+    if (mode !== "partial") return automaticViaPoints;
+
+    const bridgeViaPoint = createBiwakoBridgeViaPoint(route);
+    return bridgeViaPoint
+      ? [bridgeViaPoint, ...automaticViaPoints]
+      : automaticViaPoints;
+  }
+
   function routeLegPathPoints(leg) {
     const path = [];
 
@@ -1258,6 +1317,8 @@ function drawRouteOverlays() {
 
   function logRouteSearchDiagnostics(diagnostics) {
     const summary = {
+      キャッシュ使用: diagnostics.cacheHit,
+      条件別キャッシュキー: diagnostics.cacheKey,
       APIリクエスト数: diagnostics.apiRequestCount,
       API取得数: diagnostics.apiRouteCount,
       APIエラー数: diagnostics.apiErrorCount,
@@ -2167,7 +2228,7 @@ followToggle.checked = true;
     return true;
   }
 
-  function routeSearchLocationKey(location) {
+  function routeSearchLocationKey(location, coordinatePrecision = 6) {
     if (typeof location === "string") return location.trim();
 
     const latitude =
@@ -2179,17 +2240,26 @@ followToggle.checked = true;
       return String(location || "");
     }
 
-    return `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+    return (
+      `${latitude.toFixed(coordinatePrecision)},` +
+      longitude.toFixed(coordinatePrecision)
+    );
   }
 
   function routeSearchCacheKey({
     origin,
+    originText,
     destination,
     waypointValues,
     mode
   }) {
     return JSON.stringify({
-      origin: routeSearchLocationKey(origin),
+      origin: originText === "現在地"
+        ? `現在地:${routeSearchLocationKey(
+            origin,
+            CURRENT_LOCATION_CACHE_PRECISION
+          )}`
+        : routeSearchLocationKey(origin),
       destination: destination.trim(),
       waypoints: waypointValues.map((value) => value.trim()),
       mode
@@ -2283,6 +2353,7 @@ followToggle.checked = true;
     }));
     const cacheKey = routeSearchCacheKey({
       origin,
+      originText,
       destination: destinationText,
       waypointValues,
       mode: selectedPreference
@@ -2296,6 +2367,8 @@ followToggle.checked = true;
     const searchId = ++latestRouteSearchId;
     const diagnostics = {
       searchId,
+      cacheKey,
+      cacheHit: false,
       apiRequestCount: 0,
       apiRouteCount: 0,
       apiErrorCount: 0,
@@ -2328,6 +2401,7 @@ followToggle.checked = true;
       if (cachedCandidates) {
         if (searchId !== latestRouteSearchId) return;
 
+        diagnostics.cacheHit = true;
         diagnostics.automaticSearchReason = "条件別キャッシュを使用";
         diagnostics.automaticSearchInitialCandidateCount =
           cachedCandidates.length;
@@ -2632,7 +2706,8 @@ followToggle.checked = true;
             { mode: candidateMode, result, routeIndex },
             "通常検索",
             "",
-            candidateMode === "local" && freeReferenceRoute
+            ["local", "partial"].includes(candidateMode) &&
+              freeReferenceRoute
               ? evaluateRoutePracticality(route, freeReferenceRoute)
               : null
           );
@@ -2726,7 +2801,11 @@ followToggle.checked = true;
         const baseRoute =
           baseCandidate.result.routes[baseCandidate.routeIndex];
         const baseDistance = sumRouteTotals(baseRoute).totalDistance;
-        const viaPoints = createAutomaticViaPoints(baseRoute, baseDistance);
+        const viaPoints = createAdditionalViaPoints(
+          baseRoute,
+          baseDistance,
+          selectedPreference
+        );
 
         diagnostics.generatedViaRequestCount = viaPoints.length;
         diagnostics.apiRequestCount += viaPoints.length;
@@ -2744,8 +2823,13 @@ followToggle.checked = true;
               stopover: false
             });
             diagnostics.generatedViaPoints.push({
-              "基準位置％": Math.round(viaPoint.fraction * 100),
-              左右: viaPoint.side === "left" ? "左" : "右",
+              種別: viaPoint.label || "自動生成点",
+              "基準位置％": viaPoint.kind === "biwako-bridge"
+                ? "固定"
+                : Math.round(viaPoint.fraction * 100),
+              左右: viaPoint.side === "fixed"
+                ? "固定"
+                : viaPoint.side === "left" ? "左" : "右",
               オフセットkm: Number(
                 (viaPoint.offsetMeters / 1000).toFixed(1)
               ),
@@ -2786,18 +2870,21 @@ followToggle.checked = true;
               mode: selectedPreference,
               result,
               routeIndex,
-              isAutomatic: true
+              isAutomatic: true,
+              isBiwakoBridge: viaPoint.kind === "biwako-bridge"
             };
-            const viaPointDescription =
-              `${Math.round(viaPoint.fraction * 100)}%・` +
-              `${viaPoint.side === "left" ? "左" : "右"}・` +
-              `${Math.round(viaPoint.offsetMeters / 1000)}km`;
+            const viaPointDescription = viaPoint.kind === "biwako-bridge"
+              ? viaPoint.label
+              : `${Math.round(viaPoint.fraction * 100)}%・` +
+                `${viaPoint.side === "left" ? "左" : "右"}・` +
+                `${Math.round(viaPoint.offsetMeters / 1000)}km`;
             const automaticPracticality =
               evaluateRoutePracticality(route, baseRoute);
             const modeAssessment = routeModeAssessment(
               route,
               selectedPreference,
-              freeRouteDuration
+              freeRouteDuration,
+              { allowNotFaster: viaPoint.kind === "biwako-bridge" }
             );
 
             if (!modeAssessment.accepted) {
@@ -2878,6 +2965,12 @@ followToggle.checked = true;
           });
 
           practicalGeneratedCandidates.sort((first, second) => {
+            const fixedBridgeDifference =
+              Number(!first.isBiwakoBridge) -
+              Number(!second.isBiwakoBridge);
+
+            if (fixedBridgeDifference !== 0) return fixedBridgeDifference;
+
             const shapeDifference =
               (second.shapeDifference || 0) -
               (first.shapeDifference || 0);
