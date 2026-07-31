@@ -8,17 +8,6 @@
   const AUTO_ROUTE_MAX_OFFSET_METERS = 12000;
   const AUTO_ROUTE_OFFSET_RATIO = 0.08;
   const HIGHWAY_GUIDANCE_PATTERNS = {
-    road: [
-      /高速道路/,
-      /自動車道/,
-      /有料道路/,
-      /都市高速/,
-      /首都高速/,
-      /阪神高速/,
-      /名古屋高速/,
-      /福岡高速/,
-      /北九州高速/
-    ],
     entry: [
       /(?:高速|自動車道|有料道路|都市高速).*(?:入る|進入|合流)/,
       /(?:入る|進入|合流).*(?:高速|自動車道|有料道路|都市高速)/,
@@ -36,8 +25,11 @@
       /退出/
     ],
     approachOnly: [
-      /(?:高速|自動車道|有料道路|都市高速).*(?:入口|IC|ＩＣ|インターチェンジ).*(?:方面|向かう|進む|手前|付近)/,
-      /(?:入口|IC|ＩＣ|インターチェンジ).*(?:方面|向かう|進む|手前|付近)/
+      /(?:高速|自動車道|有料道路|都市高速)(?:入口)?\s*(?:方面|方向)/,
+      /(?:入口|IC|ＩＣ|インターチェンジ)\s*(?:方面|方向)/,
+      /(?:高速|自動車道|有料道路|都市高速)(?:入口)?\s*(?:へ|に)\s*(?:向かう|進む)/,
+      /(?:入口|IC|ＩＣ|インターチェンジ)\s*(?:へ|に)\s*(?:向かう|進む)/,
+      /(?:高速|自動車道|有料道路|都市高速|入口|IC|ＩＣ|インターチェンジ).*(?:手前|付近)/
     ]
   };
 
@@ -151,47 +143,114 @@
     return patterns.some((pattern) => pattern.test(instruction));
   }
 
-  function routeColorSegments(route) {
+  function guidanceRoadNames(instructionHtml, instruction) {
+    const temporary = document.createElement("div");
+    temporary.innerHTML = instructionHtml || "";
+
+    const emphasizedNames = [...temporary.querySelectorAll("b")]
+      .map((element) => element.textContent.replace(/\s+/g, " ").trim())
+      .filter((text) =>
+        /(?:道路|道|高速|国道|県道|府道|都道|道道|バイパス|IC|ＩＣ|インターチェンジ|入口|出口|料金所)/.test(
+          text
+        )
+      );
+    const inferredNames = [
+      ...(instruction.match(
+        /(?:国道|県道|府道|都道|道道)\s*\d+\s*号(?:線)?/g
+      ) || []),
+      ...(instruction.match(
+        /[一-龯ァ-ヶーA-Za-z0-9０-９]+(?:高速道路|自動車道|有料道路|バイパス)/g
+      ) || []),
+      ...(instruction.match(
+        /[一-龯ァ-ヶーA-Za-z0-9０-９]+(?:IC|ＩＣ|インターチェンジ)(?:入口|出口)?/g
+      ) || [])
+    ];
+    const names = [
+      ...new Set(
+        emphasizedNames.length ? emphasizedNames : inferredNames
+      )
+    ];
+
+    return names.length ? names.join(" / ") : "取得できず";
+  }
+
+  function logRouteColorTransition({
+    route,
+    context,
+    legIndex,
+    stepIndex,
+    instructionHtml,
+    instruction,
+    transition,
+    reason
+  }) {
+    console.info(`[RideNavi 色分け調査] ${transition}`, {
+      候補番号: context.candidateNumber || "不明",
+      ルート種類: context.mode ? routeModeLabel(context.mode) : "不明",
+      ルート概要: route?.summary || "取得できず",
+      leg番号: legIndex + 1,
+      step番号: stepIndex + 1,
+      案内文: instruction || "取得できず",
+      道路名: guidanceRoadNames(instructionHtml, instruction),
+      判定理由: reason
+    });
+  }
+
+  function routeColorSegments(route, context = {}) {
     const segments = [];
     let highwayActive = false;
 
-    route?.legs?.forEach((leg) => {
-      leg.steps?.forEach((step) => {
+    route?.legs?.forEach((leg, legIndex) => {
+      leg.steps?.forEach((step, stepIndex) => {
         const path = step.path || [];
         if (path.length < 2) return;
 
-        const instruction = stripHtmlInstruction(step.instructions || "");
-        const isExit =
+        const instructionHtml = step.instructions || "";
+        const instruction = stripHtmlInstruction(instructionHtml);
+        const matchesExit = matchesGuidancePattern(
+          instruction,
+          HIGHWAY_GUIDANCE_PATTERNS.exit
+        );
+        const matchesExitIndicator =
+          highwayActive &&
           matchesGuidancePattern(
             instruction,
-            HIGHWAY_GUIDANCE_PATTERNS.exit
-          ) ||
-          (
-            highwayActive &&
-            matchesGuidancePattern(
-              instruction,
-              HIGHWAY_GUIDANCE_PATTERNS.exitIndicator
-            )
+            HIGHWAY_GUIDANCE_PATTERNS.exitIndicator
           );
-        const isEntry = matchesGuidancePattern(
-          instruction,
-          HIGHWAY_GUIDANCE_PATTERNS.entry
-        );
+        const isExit = matchesExit || matchesExitIndicator;
         const isApproachOnly = matchesGuidancePattern(
           instruction,
           HIGHWAY_GUIDANCE_PATTERNS.approachOnly
         );
-        const mentionsHighway = matchesGuidancePattern(
-          instruction,
-          HIGHWAY_GUIDANCE_PATTERNS.road
-        );
+        const isEntry =
+          !isApproachOnly &&
+          matchesGuidancePattern(
+            instruction,
+            HIGHWAY_GUIDANCE_PATTERNS.entry
+          );
+        const wasHighwayActive = highwayActive;
 
         if (isExit) {
           highwayActive = false;
         } else if (isEntry) {
           highwayActive = true;
-        } else if (!highwayActive && mentionsHighway && !isApproachOnly) {
-          highwayActive = true;
+        }
+
+        if (wasHighwayActive !== highwayActive) {
+          logRouteColorTransition({
+            route,
+            context,
+            legIndex,
+            stepIndex,
+            instructionHtml,
+            instruction,
+            transition: highwayActive ? "青→赤" : "赤→青",
+            reason: highwayActive
+              ? "高速道路・有料道路へ入る／進入する／合流する案内に一致"
+              : matchesExit
+                ? "高速道路・有料道路から降りる／退出する案内に一致"
+                : "高速走行中に出口・降りる・退出を示す語句に一致"
+          });
         }
 
         segments.push({
@@ -298,7 +357,10 @@ function drawRouteOverlays() {
     outlinePolyline.addListener("click", selectRoute);
     routePolylines.push(outlinePolyline);
 
-    const colorSegments = routeColorSegments(route);
+    const colorSegments = routeColorSegments(route, {
+      candidateNumber: index + 1,
+      mode: candidate.mode
+    });
     const visibleSegments = colorSegments.length
       ? colorSegments
       : [{ path: route.overview_path, isHighway: false }];
