@@ -3270,6 +3270,12 @@ followToggle.checked = true;
         background: #1a73e8;
         color: #ffffff;
       }
+
+      @media (max-width: 480px) {
+        #rideNaviHeadingControl {
+          bottom: calc(220px + env(safe-area-inset-bottom));
+        }
+      }
     `;
     document.head.appendChild(style);
 

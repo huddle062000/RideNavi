@@ -31,6 +31,16 @@ button:disabled{cursor:default;opacity:.55}
 .route-summary-panel[hidden]{display:none}.route-summary-details{display:flex;min-width:0;flex-direction:column;gap:3px}.route-summary-title{display:flex;min-width:0;align-items:baseline;gap:8px}.route-summary-details strong{flex:0 0 auto;font-size:1rem}.route-summary-details span{overflow:hidden;color:#5f6368;font-size:.88rem;text-overflow:ellipsis;white-space:nowrap}#routeSummarySelection{flex:0 0 auto;padding:2px 7px;border-radius:999px;background:#e8f0fe;color:#0b57d0;font-size:.72rem;font-weight:700}#routeSummaryToll{color:#b06000;font-size:.78rem;font-weight:700}#routeSummaryToll[hidden]{display:none}.route-summary-panel button{flex:0 0 auto;min-height:46px;padding:0 15px;border-radius:13px;background:#1a73e8;color:#fff;font-weight:700}.route-summary-panel button:disabled{background:#9aa0a6}
 .floating-location{position:fixed;z-index:21;right:16px;bottom:calc(112px + env(safe-area-inset-bottom));width:52px;height:52px;border-radius:50%;background:#fff;color:#1a73e8;box-shadow:0 2px 10px rgba(60,64,67,.3);font-size:1.55rem;font-weight:700}
 @media(min-width:700px){.top-bar{right:auto;width:400px}.control-panel{left:10px;right:auto}}
+@media(max-width:480px){
+  .route-summary-panel{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;column-gap:8px;row-gap:6px;min-height:114px;padding:10px 10px 10px 14px}
+  .route-summary-details{display:contents}
+  .route-summary-title{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;row-gap:4px;width:100%}
+  #routeSummaryRoadType{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #routeSummaryToll{grid-column:1/-1;overflow:visible;text-overflow:clip;white-space:nowrap}
+  #routeSummaryMetrics{grid-column:1;grid-row:2;align-self:center}
+  .route-summary-panel button{grid-column:2;grid-row:2;padding:0 12px}
+  .floating-location{bottom:calc(160px + env(safe-area-inset-bottom))}
+}
 
 
 /* Ride Navi 2.3 β - route comparison */
