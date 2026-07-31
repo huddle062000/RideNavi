@@ -60,6 +60,7 @@
     /expressway/i
   ];
   const PARTIAL_TOLL_MAX_DISTANCE_RATIO = 0.5;
+  const MAX_UNNAMED_ACTIVE_ROAD_STEPS = 1;
 
   const config = window.RIDE_NAVI_CONFIG || {};
   const apiKey = String(config.GOOGLE_MAPS_API_KEY || "").trim();
@@ -123,6 +124,7 @@
   let routeSearching = false;
   let latestRouteSearchId = 0;
   let displayedRouteSearchId = 0;
+  let activeRouteSearchKey = "";
   let routeChoicePanel = null;
   let selectedRouteIndex = 0;
   let routeCandidates = [];
@@ -200,11 +202,7 @@
         /[一-龯ァ-ヶーA-Za-z0-9０-９]+(?:IC|ＩＣ|インターチェンジ)(?:入口|出口)?/g
       ) || [])
     ];
-    const names = [
-      ...new Set(
-        emphasizedNames.length ? emphasizedNames : inferredNames
-      )
-    ];
+    const names = [...new Set([...emphasizedNames, ...inferredNames])];
 
     return names;
   }
@@ -278,6 +276,7 @@
 
   function routeTollUsage(route) {
     let tollActive = false;
+    let unnamedTollStepCount = 0;
     let tollDistance = 0;
     let measuredDistance = 0;
     let hasTollEvidence = matchesTollEvidence(
@@ -323,9 +322,15 @@
             HIGHWAY_GUIDANCE_PATTERNS.entry
           );
         const stepDistance = stepPathDistanceMeters(step);
+        const leavesTollAfterUnnamedSteps =
+          tollActive &&
+          roadNameType === "unknown" &&
+          !isEntry &&
+          unnamedTollStepCount >= MAX_UNNAMED_ACTIVE_ROAD_STEPS;
         const leavesTollOnCurrentStep =
           isExit ||
-          (tollActive && roadNameType === "ordinary");
+          (tollActive && roadNameType === "ordinary") ||
+          leavesTollAfterUnnamedSteps;
         const entersTollAfterCurrentStep =
           !tollActive && isEntry;
         const stepUsesToll =
@@ -344,10 +349,20 @@
 
         if (isExit) {
           tollActive = false;
+          unnamedTollStepCount = 0;
         } else if (isEntry || stepHasTollEvidence) {
           tollActive = true;
-        } else if (tollActive && roadNameType === "ordinary") {
+          unnamedTollStepCount = 0;
+        } else if (
+          tollActive &&
+          (roadNameType === "ordinary" || leavesTollAfterUnnamedSteps)
+        ) {
           tollActive = false;
+          unnamedTollStepCount = 0;
+        } else if (tollActive && roadNameType === "unknown") {
+          unnamedTollStepCount += 1;
+        } else if (tollActive) {
+          unnamedTollStepCount = 0;
         }
       });
     });
@@ -452,11 +467,11 @@
   function routeColorSegments(route, context = {}) {
     const segments = [];
     let highwayActive = false;
+    let unnamedHighwayStepCount = 0;
 
     route?.legs?.forEach((leg, legIndex) => {
       leg.steps?.forEach((step, stepIndex) => {
         const path = step.path || [];
-        if (path.length < 2) return;
 
         const instructionHtml = step.instructions || "";
         const instruction = stripHtmlInstruction(instructionHtml);
@@ -490,9 +505,16 @@
             HIGHWAY_GUIDANCE_PATTERNS.entry
           );
         const wasHighwayActive = highwayActive;
+        const exitsHighwayAfterUnnamedSteps =
+          wasHighwayActive &&
+          roadNameType === "unknown" &&
+          !isEntry &&
+          !isApproachOnly &&
+          unnamedHighwayStepCount >= MAX_UNNAMED_ACTIVE_ROAD_STEPS;
         const exitsHighwayOnCurrentStep =
           isExit ||
-          (wasHighwayActive && roadNameType === "ordinary");
+          (wasHighwayActive && roadNameType === "ordinary") ||
+          exitsHighwayAfterUnnamedSteps;
         const entersHighwayAfterCurrentStep =
           !wasHighwayActive && isEntry;
         const segmentIsHighway =
@@ -506,23 +528,36 @@
             )
           );
 
-        segments.push({
-          path,
-          isHighway: segmentIsHighway
-        });
+        if (path.length >= 2) {
+          segments.push({
+            path,
+            isHighway: segmentIsHighway
+          });
+        }
 
         if (isExit) {
           highwayActive = false;
+          unnamedHighwayStepCount = 0;
         } else if (isEntry) {
           highwayActive = true;
-        } else if (highwayActive && roadNameType === "ordinary") {
+          unnamedHighwayStepCount = 0;
+        } else if (
+          highwayActive &&
+          (roadNameType === "ordinary" || exitsHighwayAfterUnnamedSteps)
+        ) {
           highwayActive = false;
+          unnamedHighwayStepCount = 0;
         } else if (
           !highwayActive &&
           roadNameType === "highway" &&
           !isApproachOnly
         ) {
           highwayActive = true;
+          unnamedHighwayStepCount = 0;
+        } else if (highwayActive && roadNameType === "unknown") {
+          unnamedHighwayStepCount += 1;
+        } else if (highwayActive) {
+          unnamedHighwayStepCount = 0;
         }
 
         if (wasHighwayActive !== highwayActive) {
@@ -549,7 +584,9 @@
                 ? "高速道路・有料道路から降りる／退出する案内に一致"
                 : matchesExitIndicator
                   ? "高速走行中に出口・降りる・退出を示す語句に一致"
-                  : "現在のstepで一般道の道路名を確認"
+                  : exitsHighwayAfterUnnamedSteps
+                    ? "道路名を連続して確認できないため一般道へ戻ったと推定"
+                    : "現在のstepで一般道の道路名を確認"
           });
         }
       });
@@ -718,6 +755,52 @@ function drawRouteOverlays() {
       Math.round(totals.totalDistance / 500),
       Math.round(totals.totalDuration / 300)
     ].join("|");
+  }
+
+  function routeShapeSortKey(route) {
+    const path = routeOverviewPoints(route);
+    const sampleCount = Math.min(16, path.length);
+
+    if (!sampleCount) return "";
+
+    return Array.from({ length: sampleCount }, (_, index) => {
+      const pathIndex = Math.round(
+        index * (path.length - 1) / Math.max(1, sampleCount - 1)
+      );
+      const point = path[pathIndex];
+      return `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`;
+    }).join("|");
+  }
+
+  function compareRoutesDeterministically(firstRoute, secondRoute) {
+    const firstTotals = sumRouteTotals(firstRoute);
+    const secondTotals = sumRouteTotals(secondRoute);
+    const durationDifference =
+      firstTotals.totalDuration - secondTotals.totalDuration;
+
+    if (durationDifference !== 0) return durationDifference;
+
+    const distanceDifference =
+      firstTotals.totalDistance - secondTotals.totalDistance;
+
+    if (distanceDifference !== 0) return distanceDifference;
+
+    const signatureDifference = routeSignature(firstRoute).localeCompare(
+      routeSignature(secondRoute)
+    );
+
+    if (signatureDifference !== 0) return signatureDifference;
+    return routeShapeSortKey(firstRoute).localeCompare(
+      routeShapeSortKey(secondRoute)
+    );
+  }
+
+  function sortedRouteEntries(routes) {
+    return routes
+      .map((route, routeIndex) => ({ route, routeIndex }))
+      .sort((first, second) =>
+        compareRoutesDeterministically(first.route, second.route)
+      );
   }
 
   function routeOverviewPoints(route) {
@@ -1051,7 +1134,7 @@ function drawRouteOverlays() {
     return false;
   }
 
-  function evaluateAutomaticRoutePracticality(route, referenceRoute) {
+  function evaluateRoutePracticality(route, referenceRoute) {
     const routeTotals = sumRouteTotals(route);
     const referenceTotals = sumRouteTotals(referenceRoute);
     const durationRatio =
@@ -1166,14 +1249,14 @@ function drawRouteOverlays() {
       簡易署名重複数: diagnostics.signatureDuplicateCount,
       形状重複数: diagnostics.shapeDuplicateCount,
       距離倍率除外数: diagnostics.distanceExcludedCount,
-      自動候補逆方向除外数:
-        diagnostics.automaticDirectionExcludedCount,
-      自動候補地域外れ除外数:
-        diagnostics.automaticDeviationExcludedCount,
-      自動候補ループ除外数:
-        diagnostics.automaticLoopExcludedCount,
-      自動候補時間超過除外数:
-        diagnostics.automaticDurationExcludedCount,
+      実用性判定逆方向除外数:
+        diagnostics.practicalityDirectionExcludedCount,
+      実用性判定地域外れ除外数:
+        diagnostics.practicalityDeviationExcludedCount,
+      実用性判定ループ除外数:
+        diagnostics.practicalityLoopExcludedCount,
+      実用性判定時間超過除外数:
+        diagnostics.practicalityDurationExcludedCount,
       自動通過点検索数: diagnostics.generatedViaRequestCount,
       最終採用数: diagnostics.finalAcceptedCount
     };
@@ -2179,6 +2262,11 @@ followToggle.checked = true;
       mode: selectedPreference
     });
 
+    if (routeSearching && activeRouteSearchKey === cacheKey) {
+      showStatus("同じ条件のルートを検索中です");
+      return;
+    }
+
     const searchId = ++latestRouteSearchId;
     const diagnostics = {
       searchId,
@@ -2188,15 +2276,16 @@ followToggle.checked = true;
       signatureDuplicateCount: 0,
       shapeDuplicateCount: 0,
       distanceExcludedCount: 0,
-      automaticDirectionExcludedCount: 0,
-      automaticDeviationExcludedCount: 0,
-      automaticLoopExcludedCount: 0,
-      automaticDurationExcludedCount: 0,
+      practicalityDirectionExcludedCount: 0,
+      practicalityDeviationExcludedCount: 0,
+      practicalityLoopExcludedCount: 0,
+      practicalityDurationExcludedCount: 0,
       generatedViaRequestCount: 0,
       finalAcceptedCount: 0,
       candidates: []
     };
     routeSearching = true;
+    activeRouteSearchKey = cacheKey;
     routeButton.disabled = true;
     routeButton.textContent = "ルートを検索中…";
     resetRouteSearchState(selectedPreference);
@@ -2245,7 +2334,7 @@ followToggle.checked = true;
         candidate,
         source,
         viaPointDescription = "",
-        automaticPracticality = null
+        practicality = null
       ) => {
         const route = candidate.result.routes[candidate.routeIndex];
         const totals = sumRouteTotals(route);
@@ -2256,24 +2345,24 @@ followToggle.checked = true;
           自動通過点: viaPointDescription,
           距離km: Number((totals.totalDistance / 1000).toFixed(1)),
           距離倍率: "",
-          時間倍率: automaticPracticality
-            ? Number(automaticPracticality.durationRatio.toFixed(3))
+          時間倍率: practicality
+            ? Number(practicality.durationRatio.toFixed(3))
             : "",
-          最大逆行km: automaticPracticality
+          最大逆行km: practicality
             ? Number(
                 (
-                  automaticPracticality.directionMetrics
+                  practicality.directionMetrics
                     .maximumBacktrackDistance / 1000
                 ).toFixed(1)
               )
             : "",
-          基準経路最大乖離km: automaticPracticality
+          基準経路最大乖離km: practicality
             ? Number(
-                (automaticPracticality.maximumDeviation / 1000).toFixed(1)
+                (practicality.maximumDeviation / 1000).toFixed(1)
               )
             : "",
-          ループ検出: automaticPracticality
-            ? automaticPracticality.hasLoop
+          ループ検出: practicality
+            ? practicality.hasLoop
             : "",
           最大形状重複率: "",
           形状差: "",
@@ -2283,39 +2372,38 @@ followToggle.checked = true;
         diagnostics.candidates.push(record);
         candidateRecords.set(candidate, record);
 
-        if (automaticPracticality && !automaticPracticality.accepted) {
+        if (practicality && !practicality.accepted) {
           if (
-            automaticPracticality.rejectionReasons.includes(
+            practicality.rejectionReasons.includes(
               "逆方向への大きな進行"
             )
           ) {
-            diagnostics.automaticDirectionExcludedCount += 1;
+            diagnostics.practicalityDirectionExcludedCount += 1;
           }
           if (
-            automaticPracticality.rejectionReasons.includes(
+            practicality.rejectionReasons.includes(
               "最短ルートから極端に離脱"
             )
           ) {
-            diagnostics.automaticDeviationExcludedCount += 1;
+            diagnostics.practicalityDeviationExcludedCount += 1;
           }
           if (
-            automaticPracticality.rejectionReasons.includes(
+            practicality.rejectionReasons.includes(
               "折り返し・ループ"
             )
           ) {
-            diagnostics.automaticLoopExcludedCount += 1;
+            diagnostics.practicalityLoopExcludedCount += 1;
           }
           if (
-            automaticPracticality.rejectionReasons.includes(
+            practicality.rejectionReasons.includes(
               "所要時間1.3倍超過"
             )
           ) {
-            diagnostics.automaticDurationExcludedCount += 1;
+            diagnostics.practicalityDurationExcludedCount += 1;
           }
 
           record.判定 =
-            `自動候補除外：` +
-            automaticPracticality.rejectionReasons.join("・");
+            `${source}除外：` + practicality.rejectionReasons.join("・");
           return false;
         }
 
@@ -2372,6 +2460,17 @@ followToggle.checked = true;
             )
           )
         : Infinity;
+      const freeReferenceRoute = freeRoutes
+        .slice()
+        .sort((first, second) => {
+          const firstTotals = sumRouteTotals(first);
+          const secondTotals = sumRouteTotals(second);
+          const distanceDifference =
+            firstTotals.totalDistance - secondTotals.totalDistance;
+
+          if (distanceDifference !== 0) return distanceDifference;
+          return compareRoutesDeterministically(first, second);
+        })[0] || null;
 
       responses.forEach(({ mode, response }) => {
         const { result, status } = response;
@@ -2387,14 +2486,10 @@ followToggle.checked = true;
                 .filter((route) =>
                   routeMatchesMode(route, "highway", freeRouteDuration)
                 )
-                .sort(
-                  (first, second) =>
-                    sumRouteTotals(first).totalDuration -
-                    sumRouteTotals(second).totalDuration
-                )[0]
+                .sort(compareRoutesDeterministically)[0]
             : null;
 
-        result.routes.forEach((route, routeIndex) => {
+        sortedRouteEntries(result.routes).forEach(({ route, routeIndex }) => {
           let candidateMode = mode;
 
           if (mode === "local") {
@@ -2413,7 +2508,11 @@ followToggle.checked = true;
 
           evaluateCandidate(
             { mode: candidateMode, result, routeIndex },
-            "通常検索"
+            "通常検索",
+            "",
+            candidateMode === "local" && freeReferenceRoute
+              ? evaluateRoutePracticality(route, freeReferenceRoute)
+              : null
           );
         });
       });
@@ -2546,7 +2645,7 @@ followToggle.checked = true;
               `${viaPoint.side === "left" ? "左" : "右"}・` +
               `${Math.round(viaPoint.offsetMeters / 1000)}km`;
             const automaticPracticality =
-              evaluateAutomaticRoutePracticality(route, baseRoute);
+              evaluateRoutePracticality(route, baseRoute);
             const matchesSelectedMode = routeMatchesMode(
               route,
               selectedPreference,
@@ -2646,7 +2745,14 @@ followToggle.checked = true;
               firstTotals.totalDistance - secondTotals.totalDistance;
 
             if (distanceDifference !== 0) return distanceDifference;
-            return firstTotals.totalDuration - secondTotals.totalDuration;
+            const durationDifference =
+              firstTotals.totalDuration - secondTotals.totalDuration;
+
+            if (durationDifference !== 0) return durationDifference;
+            return compareRoutesDeterministically(
+              first.result.routes[first.routeIndex],
+              second.result.routes[second.routeIndex]
+            );
           });
 
           if (
@@ -2696,9 +2802,10 @@ followToggle.checked = true;
         const modeDifference = modeOrder[a.mode] - modeOrder[b.mode];
         if (modeDifference !== 0) return modeDifference;
 
-        const aTotals = sumRouteTotals(a.result.routes[a.routeIndex]);
-        const bTotals = sumRouteTotals(b.result.routes[b.routeIndex]);
-        return aTotals.totalDuration - bTotals.totalDuration;
+        return compareRoutesDeterministically(
+          a.result.routes[a.routeIndex],
+          b.result.routes[b.routeIndex]
+        );
       });
 
       if (searchId !== latestRouteSearchId) return;
@@ -2717,6 +2824,7 @@ followToggle.checked = true;
       if (searchId === latestRouteSearchId) {
         logRouteSearchDiagnostics(diagnostics);
         routeSearching = false;
+        activeRouteSearchKey = "";
         routeButton.disabled = false;
         routeButton.textContent = routeButtonIdleText;
       }
