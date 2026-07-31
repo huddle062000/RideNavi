@@ -230,6 +230,27 @@
     return "unknown";
   }
 
+  function stepPathSummary(path) {
+    const locationText = (point) => {
+      const latitude =
+        typeof point?.lat === "function" ? point.lat() : point?.lat;
+      const longitude =
+        typeof point?.lng === "function" ? point.lng() : point?.lng;
+
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return "取得できず";
+      }
+
+      return `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+    };
+
+    return {
+      点数: path.length,
+      開始位置: locationText(path[0]),
+      終了位置: locationText(path[path.length - 1])
+    };
+  }
+
   function logRouteColorTransition({
     route,
     context,
@@ -237,9 +258,19 @@
     stepIndex,
     instruction,
     roadNames,
+    path,
     transition,
-    reason
+    reason,
+    appliesToCurrentStep,
+    targetStep
   }) {
+    const targetInstructionHtml = targetStep?.instructions || "";
+    const targetInstruction = stripHtmlInstruction(targetInstructionHtml);
+    const targetRoadNames = guidanceRoadNameCandidates(
+      targetInstructionHtml,
+      targetInstruction
+    );
+
     console.info(`[RideNavi 色分け調査] ${transition}`, {
       候補番号: context.candidateNumber || "不明",
       ルート種類: context.mode ? routeModeLabel(context.mode) : "不明",
@@ -248,7 +279,17 @@
       step番号: stepIndex + 1,
       案内文: instruction || "取得できず",
       道路名: guidanceRoadNames(roadNames),
-      判定理由: reason
+      判定stepの経路形状: stepPathSummary(path),
+      判定理由: reason,
+      色変更対象: appliesToCurrentStep
+        ? `このstep.pathから（step ${stepIndex + 1}）`
+        : `次のstep.pathから（step ${stepIndex + 2}）`,
+      色変更対象step: {
+        step番号: appliesToCurrentStep ? stepIndex + 1 : stepIndex + 2,
+        案内文: targetInstruction || "取得できず",
+        道路名: guidanceRoadNames(targetRoadNames),
+        経路形状: stepPathSummary(targetStep?.path || [])
+      }
     });
   }
 
@@ -293,6 +334,26 @@
             HIGHWAY_GUIDANCE_PATTERNS.entry
           );
         const wasHighwayActive = highwayActive;
+        const exitsHighwayOnCurrentStep =
+          isExit ||
+          (wasHighwayActive && roadNameType === "ordinary");
+        const entersHighwayAfterCurrentStep =
+          !wasHighwayActive && isEntry;
+        const segmentIsHighway =
+          !exitsHighwayOnCurrentStep &&
+          !entersHighwayAfterCurrentStep &&
+          (
+            wasHighwayActive ||
+            (
+              roadNameType === "highway" &&
+              !isApproachOnly
+            )
+          );
+
+        segments.push({
+          path,
+          isHighway: segmentIsHighway
+        });
 
         if (isExit) {
           highwayActive = false;
@@ -300,9 +361,17 @@
           highwayActive = true;
         } else if (highwayActive && roadNameType === "ordinary") {
           highwayActive = false;
+        } else if (
+          !highwayActive &&
+          roadNameType === "highway" &&
+          !isApproachOnly
+        ) {
+          highwayActive = true;
         }
 
         if (wasHighwayActive !== highwayActive) {
+          const appliesToCurrentStep = !highwayActive || !isEntry;
+
           logRouteColorTransition({
             route,
             context,
@@ -310,9 +379,16 @@
             stepIndex,
             instruction,
             roadNames,
+            path,
             transition: highwayActive ? "青→赤" : "赤→青",
+            appliesToCurrentStep,
+            targetStep: appliesToCurrentStep
+              ? step
+              : leg.steps?.[stepIndex + 1],
             reason: highwayActive
-              ? "高速道路・有料道路へ入る／進入する／合流する案内に一致"
+              ? isEntry
+                ? "高速道路・有料道路へ入る／進入する／合流する案内に一致"
+                : "現在のstepで高速道路・有料道路の道路名を確認"
               : matchesExit
                 ? "高速道路・有料道路から降りる／退出する案内に一致"
                 : matchesExitIndicator
@@ -320,11 +396,6 @@
                   : "現在のstepで一般道の道路名を確認"
           });
         }
-
-        segments.push({
-          path,
-          isHighway: highwayActive
-        });
       });
     });
 
