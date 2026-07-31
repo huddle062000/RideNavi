@@ -93,6 +93,7 @@
   let shareRouteButton = null;
   const navigationButton = $("navigationButton");
   const routeSummaryPanel = $("routeSummaryPanel");
+  const routeSummarySelection = $("routeSummarySelection");
   const routeSummaryRoadType = $("routeSummaryRoadType");
   const routeSummaryToll = $("routeSummaryToll");
   const routeSummaryMetrics = $("routeSummaryMetrics");
@@ -656,41 +657,33 @@ function drawRouteOverlays() {
       applyRouteCandidate(index);
     };
 
-    const outlinePolyline = new google.maps.Polyline({
-      map,
-      path: route.overview_path,
-      strokeColor: "#ffffff",
-      strokeOpacity: 0.95,
-      strokeWeight: isSelected ? 13 : 12,
-      zIndex: isSelected ? 90 : 20 + index,
-      clickable: true
-    });
-
-    outlinePolyline.addListener("click", selectRoute);
-    routePolylines.push(outlinePolyline);
-
-    const colorSegments = routeColorSegments(route, {
-      candidateNumber: index + 1,
-      mode: candidate.mode
-    });
-    const visibleSegments = colorSegments.length
-      ? colorSegments
-      : [{ path: route.overview_path, isHighway: false }];
-
-    visibleSegments.forEach((segment) => {
-      const routePolyline = new google.maps.Polyline({
+    if (isSelected) {
+      const outlinePolyline = new google.maps.Polyline({
         map,
-        path: segment.path,
-        strokeColor: segment.isHighway ? "#d93025" : "#1a73e8",
-        strokeOpacity: 1,
-        strokeWeight: isSelected ? 9 : 8,
-        zIndex: isSelected ? 100 : 30 + index,
+        path: route.overview_path,
+        strokeColor: "#ffffff",
+        strokeOpacity: 0.98,
+        strokeWeight: 14,
+        zIndex: 90,
         clickable: true
       });
 
-      routePolyline.addListener("click", selectRoute);
-      routePolylines.push(routePolyline);
+      outlinePolyline.addListener("click", selectRoute);
+      routePolylines.push(outlinePolyline);
+    }
+
+    const routePolyline = new google.maps.Polyline({
+      map,
+      path: route.overview_path,
+      strokeColor: isSelected ? "#0b57d0" : "#8ab4f8",
+      strokeOpacity: isSelected ? 1 : 0.9,
+      strokeWeight: isSelected ? 10 : 6,
+      zIndex: isSelected ? 100 : 20 + index,
+      clickable: true
     });
+
+    routePolyline.addListener("click", selectRoute);
+    routePolylines.push(routePolyline);
 
   });
 }
@@ -750,9 +743,14 @@ function drawRouteOverlays() {
     );
   }
 
-  function updateRouteSummaryPanel(mode, route, totals) {
+  function routeCandidateNumber(candidateIndex) {
+    return ["①", "②", "③"][candidateIndex] || String(candidateIndex + 1);
+  }
+
+  function updateRouteSummaryPanel(candidateIndex, mode, route, totals) {
     if (
       !routeSummaryPanel ||
+      !routeSummarySelection ||
       !routeSummaryRoadType ||
       !routeSummaryToll ||
       !routeSummaryMetrics
@@ -760,6 +758,8 @@ function drawRouteOverlays() {
       return;
     }
 
+    routeSummarySelection.textContent =
+      `選択中 ${routeCandidateNumber(candidateIndex)}`;
     routeSummaryRoadType.textContent = routeModeShortLabel(mode);
     const estimatedToll = estimateMotorcycleToll(route, mode, totals);
     routeSummaryToll.hidden = estimatedToll === null;
@@ -1372,7 +1372,7 @@ function drawRouteOverlays() {
 
     const totals = sumRouteTotals(route);
     updateNavigationInfoPanel(route);
-    updateRouteSummaryPanel(candidate.mode, route, totals);
+    updateRouteSummaryPanel(candidateIndex, candidate.mode, route, totals);
 
     if (navigationButton) {
       navigationButton.disabled = navigationSteps.length === 0;
@@ -2010,7 +2010,12 @@ followToggle.checked = true;
       const route = result.routes[0];
       const totals = sumRouteTotals(route);
       updateNavigationInfoPanel(route);
-      updateRouteSummaryPanel(selectedRouteMode, route, totals);
+      updateRouteSummaryPanel(
+        selectedRouteIndex,
+        selectedRouteMode,
+        route,
+        totals
+      );
 
       routeInfo.innerHTML =
         `距離：${formatDistance(totals.totalDistance)}<br>` +
