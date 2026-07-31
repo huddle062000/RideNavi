@@ -3,6 +3,39 @@
 
   const DEFAULT_CENTER = { lat: 35.0116, lng: 135.7681 };
   const MAX_WAYPOINTS = 5;
+  const HIGHWAY_GUIDANCE_PATTERNS = {
+    road: [
+      /高速道路/,
+      /自動車道/,
+      /有料道路/,
+      /都市高速/,
+      /首都高速/,
+      /阪神高速/,
+      /名古屋高速/,
+      /福岡高速/,
+      /北九州高速/
+    ],
+    entry: [
+      /(?:高速|自動車道|有料道路|都市高速).*(?:入る|進入|合流)/,
+      /(?:入る|進入|合流).*(?:高速|自動車道|有料道路|都市高速)/,
+      /(?:IC|ＩＣ|インターチェンジ).*(?:入る|進入|合流)/,
+      /(?:入口|料金所).*(?:入る|進入|合流|通過)/
+    ],
+    exit: [
+      /(?:高速|自動車道|有料道路|都市高速).*(?:降りる|退出|出る)/,
+      /(?:降りる|退出|出る).*(?:高速|自動車道|有料道路|都市高速)/,
+      /(?:出口|IC|ＩＣ|インターチェンジ).*(?:降りる|退出|出る)/
+    ],
+    exitIndicator: [
+      /出口/,
+      /降りる/,
+      /退出/
+    ],
+    approachOnly: [
+      /(?:高速|自動車道|有料道路|都市高速).*(?:入口|IC|ＩＣ|インターチェンジ).*(?:方面|向かう|進む|手前|付近)/,
+      /(?:入口|IC|ＩＣ|インターチェンジ).*(?:方面|向かう|進む|手前|付近)/
+    ]
+  };
 
   const config = window.RIDE_NAVI_CONFIG || {};
   const apiKey = String(config.GOOGLE_MAPS_API_KEY || "").trim();
@@ -108,6 +141,64 @@
     if (!path.length) return null;
     return path[Math.floor(path.length / 2)];
   }
+
+  function matchesGuidancePattern(instruction, patterns) {
+    return patterns.some((pattern) => pattern.test(instruction));
+  }
+
+  function routeColorSegments(route) {
+    const segments = [];
+    let highwayActive = false;
+
+    route?.legs?.forEach((leg) => {
+      leg.steps?.forEach((step) => {
+        const path = step.path || [];
+        if (path.length < 2) return;
+
+        const instruction = stripHtmlInstruction(step.instructions || "");
+        const isExit =
+          matchesGuidancePattern(
+            instruction,
+            HIGHWAY_GUIDANCE_PATTERNS.exit
+          ) ||
+          (
+            highwayActive &&
+            matchesGuidancePattern(
+              instruction,
+              HIGHWAY_GUIDANCE_PATTERNS.exitIndicator
+            )
+          );
+        const isEntry = matchesGuidancePattern(
+          instruction,
+          HIGHWAY_GUIDANCE_PATTERNS.entry
+        );
+        const isApproachOnly = matchesGuidancePattern(
+          instruction,
+          HIGHWAY_GUIDANCE_PATTERNS.approachOnly
+        );
+        const mentionsHighway = matchesGuidancePattern(
+          instruction,
+          HIGHWAY_GUIDANCE_PATTERNS.road
+        );
+
+        if (isExit) {
+          highwayActive = false;
+        } else if (isEntry) {
+          highwayActive = true;
+        } else if (!highwayActive && mentionsHighway && !isApproachOnly) {
+          highwayActive = true;
+        }
+
+        segments.push({
+          path,
+          isHighway: highwayActive
+        });
+      });
+    });
+
+    return segments;
+  }
+
 function createRouteLabelOverlay(position, text, isSelected, onClick) {
   class RouteLabelOverlay extends google.maps.OverlayView {
     constructor() {
@@ -202,18 +293,25 @@ function drawRouteOverlays() {
     outlinePolyline.addListener("click", selectRoute);
     routePolylines.push(outlinePolyline);
 
-    const routePolyline = new google.maps.Polyline({
-      map,
-      path: route.overview_path,
-      strokeColor: ["#1565C0", "#1E88E5", "#64B5F6"][index] || "#64B5F6",
-      strokeOpacity: 1,
-    strokeWeight: isSelected ? 9 : 8,
-      zIndex: isSelected ? 100 : 30 + index,
-      clickable: true
-    });
+    const colorSegments = routeColorSegments(route);
+    const visibleSegments = colorSegments.length
+      ? colorSegments
+      : [{ path: route.overview_path, isHighway: false }];
 
-    routePolyline.addListener("click", selectRoute);
-    routePolylines.push(routePolyline);
+    visibleSegments.forEach((segment) => {
+      const routePolyline = new google.maps.Polyline({
+        map,
+        path: segment.path,
+        strokeColor: segment.isHighway ? "#d93025" : "#1a73e8",
+        strokeOpacity: 1,
+        strokeWeight: isSelected ? 9 : 8,
+        zIndex: isSelected ? 100 : 30 + index,
+        clickable: true
+      });
+
+      routePolyline.addListener("click", selectRoute);
+      routePolylines.push(routePolyline);
+    });
 
     const midpoint = routeMidpoint(route);
     if (!midpoint) return;
