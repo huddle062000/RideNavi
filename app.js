@@ -1308,6 +1308,17 @@ const modes =
         return;
       }
 
+      const shortestDistance = Math.min(
+        ...candidates.map((candidate) =>
+          sumRouteTotals(candidate.result.routes[candidate.routeIndex])
+            .totalDistance
+        )
+      );
+      const reasonableCandidates = candidates.filter((candidate) =>
+        sumRouteTotals(candidate.result.routes[candidate.routeIndex])
+          .totalDistance <= shortestDistance * 1.5
+      );
+
       const preferredMode =
         document.getElementById("routeMode")?.value || "highway";
       const baseOrder = ["highway", "partial", "local"];
@@ -1318,7 +1329,7 @@ const modes =
       const modeOrder = Object.fromEntries(
         orderedModes.map((mode, index) => [mode, index])
       );
-      candidates.sort((a, b) => {
+      reasonableCandidates.sort((a, b) => {
         const modeDifference = modeOrder[a.mode] - modeOrder[b.mode];
         if (modeDifference !== 0) return modeDifference;
 
@@ -1327,9 +1338,9 @@ const modes =
         return aTotals.totalDuration - bTotals.totalDuration;
       });
 
-      showRouteChoices(candidates);
+      showRouteChoices(reasonableCandidates);
       closePanel();
-      showStatus(`${candidates.length}件のルート候補が見つかりました`, true);
+      showStatus(`${reasonableCandidates.length}件のルート候補が見つかりました`, true);
     } catch (error) {
       console.error("Directions route error:", error);
       showStatus("ルート候補の検索に失敗しました");
