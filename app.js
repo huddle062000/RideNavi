@@ -145,6 +145,7 @@
   let routeCandidates = [];
   let selectedRouteMode = "local";
   let routePolylines = [];
+  let routeNumberMarkers = [];
   const routeSearchCache = new Map();
 
   function showStatus(message, autoHide = false) {
@@ -176,6 +177,8 @@
   function clearRouteOverlays() {
     routePolylines.forEach((polyline) => polyline.setMap(null));
     routePolylines = [];
+    routeNumberMarkers.forEach((marker) => marker.setMap(null));
+    routeNumberMarkers = [];
   }
 
   function updateRouteEndpointsSummary() {
@@ -652,6 +655,7 @@ function drawRouteOverlays() {
   routeCandidates.forEach((candidate, index) => {
     const route = candidate.result.routes[candidate.routeIndex];
     const isSelected = index === selectedRouteIndex;
+    const routeColor = isSelected ? "#102a43" : "#0b57d0";
     const colorSegments = routeColorSegments(route, {
       candidateNumber: index + 1,
       mode: candidate.mode
@@ -683,9 +687,7 @@ function drawRouteOverlays() {
       const routePolyline = new google.maps.Polyline({
         map,
         path: segment.path,
-        strokeColor: segment.isHighway
-          ? isSelected ? "#d93025" : "#f28b82"
-          : isSelected ? "#0b57d0" : "#8ab4f8",
+        strokeColor: routeColor,
         strokeOpacity: isSelected ? 1 : 0.72,
         strokeWeight: isSelected ? 10 : 5,
         zIndex: isSelected ? 200 : 20 + index,
@@ -695,6 +697,40 @@ function drawRouteOverlays() {
       routePolyline.addListener("click", selectRoute);
       routePolylines.push(routePolyline);
     });
+
+    const routePath = route.overview_path || [];
+    const labelFractions = [0.42, 0.5, 0.58];
+    const labelPosition = routePath[
+      Math.round((routePath.length - 1) * (labelFractions[index] || 0.5))
+    ];
+
+    if (labelPosition) {
+      const routeNumberMarker = new google.maps.Marker({
+        map,
+        position: labelPosition,
+        label: {
+          text: String(index + 1),
+          color: "#ffffff",
+          fontSize: "15px",
+          fontWeight: "700"
+        },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 15,
+          fillColor: routeColor,
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeOpacity: 1,
+          strokeWeight: 2
+        },
+        title: `ルート${routeCandidateNumber(index)}`,
+        zIndex: isSelected ? 240 : 60 + index,
+        clickable: true
+      });
+
+      routeNumberMarker.addListener("click", selectRoute);
+      routeNumberMarkers.push(routeNumberMarker);
+    }
 
   });
 }
