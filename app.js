@@ -67,6 +67,9 @@
     lng: 135.935418
   };
   const BIWAKO_BRIDGE_SEARCH_DISTANCE_METERS = 30000;
+  const MOTORCYCLE_TOLL_BASE_YEN = 150;
+  const MOTORCYCLE_TOLL_PER_KM_YEN = 22;
+  const MOTORCYCLE_TOLL_ROUNDING_YEN = 50;
 
   const config = window.RIDE_NAVI_CONFIG || {};
   const apiKey = String(config.GOOGLE_MAPS_API_KEY || "").trim();
@@ -91,6 +94,7 @@
   const navigationButton = $("navigationButton");
   const routeSummaryPanel = $("routeSummaryPanel");
   const routeSummaryRoadType = $("routeSummaryRoadType");
+  const routeSummaryToll = $("routeSummaryToll");
   const routeSummaryMetrics = $("routeSummaryMetrics");
   let navigationActive = false;
   let lastRouteResult = null;
@@ -729,12 +733,44 @@ function drawRouteOverlays() {
     return labels[mode] || "ルート";
   }
 
-  function updateRouteSummaryPanel(mode, totals) {
-    if (!routeSummaryPanel || !routeSummaryRoadType || !routeSummaryMetrics) {
+  function estimateMotorcycleToll(route, mode, totals) {
+    if (mode === "local") return null;
+
+    const tollUsage = routeTollUsage(route);
+    const tollDistanceKm =
+      totals.totalDistance * tollUsage.tollDistanceRatio / 1000;
+    const estimatedToll =
+      MOTORCYCLE_TOLL_BASE_YEN +
+      Math.max(tollDistanceKm, 1) * MOTORCYCLE_TOLL_PER_KM_YEN;
+
+    return Math.max(
+      MOTORCYCLE_TOLL_ROUNDING_YEN,
+      Math.round(estimatedToll / MOTORCYCLE_TOLL_ROUNDING_YEN) *
+        MOTORCYCLE_TOLL_ROUNDING_YEN
+    );
+  }
+
+  function updateRouteSummaryPanel(mode, route, totals) {
+    if (
+      !routeSummaryPanel ||
+      !routeSummaryRoadType ||
+      !routeSummaryToll ||
+      !routeSummaryMetrics
+    ) {
       return;
     }
 
     routeSummaryRoadType.textContent = routeModeShortLabel(mode);
+    const estimatedToll = estimateMotorcycleToll(route, mode, totals);
+    routeSummaryToll.hidden = estimatedToll === null;
+    routeSummaryToll.textContent =
+      estimatedToll === null
+        ? ""
+        : `料金目安 約${estimatedToll.toLocaleString("ja-JP")}円`;
+    routeSummaryToll.title =
+      estimatedToll === null
+        ? ""
+        : "二輪車の概算料金です。実際の料金と異なる場合があります";
     routeSummaryMetrics.textContent =
       `${formatDuration(totals.totalDuration)}・` +
       formatDistance(totals.totalDistance);
@@ -1336,7 +1372,7 @@ function drawRouteOverlays() {
 
     const totals = sumRouteTotals(route);
     updateNavigationInfoPanel(route);
-    updateRouteSummaryPanel(candidate.mode, totals);
+    updateRouteSummaryPanel(candidate.mode, route, totals);
 
     if (navigationButton) {
       navigationButton.disabled = navigationSteps.length === 0;
@@ -1974,7 +2010,7 @@ followToggle.checked = true;
       const route = result.routes[0];
       const totals = sumRouteTotals(route);
       updateNavigationInfoPanel(route);
-      updateRouteSummaryPanel(selectedRouteMode, totals);
+      updateRouteSummaryPanel(selectedRouteMode, route, totals);
 
       routeInfo.innerHTML =
         `距離：${formatDistance(totals.totalDistance)}<br>` +
