@@ -832,26 +832,28 @@ function drawRouteOverlays() {
 
     selectedRouteIndex = candidateIndex;
     selectedRouteMode = candidate.mode;
+    const singleResult = makeSingleRouteResult(
+      candidate.result,
+      candidate.routeIndex
+    );
+    const route = singleResult.routes[0];
 
     directionsRenderer.setOptions({
+      preserveViewport: true,
       polylineOptions: {
         strokeOpacity: 0,
         strokeWeight: 0
       }
     });
-    directionsRenderer.setDirections(candidate.result);
-    directionsRenderer.setRouteIndex(candidate.routeIndex);
-
-    const singleResult = makeSingleRouteResult(
-      candidate.result,
-      candidate.routeIndex
-    );
+    if (route?.bounds) {
+      map.fitBounds(route.bounds);
+    }
+    directionsRenderer.setDirections(singleResult);
 
     lastRouteResult = singleResult;
     buildNavigationSteps(singleResult);
     updateRoutePath(singleResult);
 
-    const route = singleResult.routes[0];
     const totals = sumRouteTotals(route);
     updateNavigationInfoPanel(route);
 
@@ -1758,8 +1760,9 @@ followToggle.checked = true;
       candidates: []
     };
     routeSearching = true;
+    const idleRouteButtonText = routeButton.textContent;
     routeButton.disabled = true;
-    routeButton.textContent = "3種類を検索中…";
+    routeButton.textContent = "ルートを検索中…";
     showStatus("高速優先・無料高速OK・一般道を比較しています…");
 
     try {
@@ -2146,7 +2149,7 @@ followToggle.checked = true;
       if (searchId === latestRouteSearchId) {
         routeSearching = false;
         routeButton.disabled = false;
-        routeButton.textContent = "🧭 3種類のルートを比較";
+        routeButton.textContent = idleRouteButtonText;
       }
     }
   }
