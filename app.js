@@ -7,6 +7,7 @@
   const AUTO_ROUTE_MIN_OFFSET_METERS = 1500;
   const AUTO_ROUTE_MAX_OFFSET_METERS = 12000;
   const AUTO_ROUTE_OFFSET_RATIO = 0.08;
+  const AUTO_ROUTE_MAX_DURATION_RATIO = 1.3;
   const HIGHWAY_GUIDANCE_PATTERNS = {
     entry: [
       /(?:高速|自動車道|有料道路|都市高速).*(?:入る|進入|合流)/,
@@ -737,6 +738,209 @@ function drawRouteOverlays() {
     return minimumDistance;
   }
 
+  function sampleRouteOverview(route, maximumPoints = 100) {
+    const path = routeOverviewPoints(route);
+    if (path.length <= maximumPoints) return path;
+
+    return Array.from({ length: maximumPoints }, (_, index) => {
+      const pathIndex = Math.round(
+        index * (path.length - 1) / Math.max(1, maximumPoints - 1)
+      );
+      return path[pathIndex];
+    });
+  }
+
+  function routeDirectionMetrics(route, referenceRoute) {
+    const referencePath = routeOverviewPoints(referenceRoute);
+    const routePath = sampleRouteOverview(route);
+
+    if (referencePath.length < 2 || routePath.length < 2) {
+      return {
+        directDistance: 0,
+        behindOriginDistance: 0,
+        beyondDestinationDistance: 0,
+        maximumBacktrackDistance: 0,
+        isLargeReverse: false
+      };
+    }
+
+    const origin = referencePath[0];
+    const destination = referencePath[referencePath.length - 1];
+    const meanLatitude =
+      ((origin.lat + destination.lat) / 2) * Math.PI / 180;
+    const longitudeScale =
+      111320 * Math.max(0.1, Math.cos(meanLatitude));
+    const destinationVector = {
+      east: (destination.lng - origin.lng) * longitudeScale,
+      north: (destination.lat - origin.lat) * 111320
+    };
+    const directDistance = Math.hypot(
+      destinationVector.east,
+      destinationVector.north
+    );
+
+    if (directDistance < 1) {
+      return {
+        directDistance,
+        behindOriginDistance: 0,
+        beyondDestinationDistance: 0,
+        maximumBacktrackDistance: 0,
+        isLargeReverse: false
+      };
+    }
+
+    const progressDistances = routePath.map((point) => {
+      const pointVector = {
+        east: (point.lng - origin.lng) * longitudeScale,
+        north: (point.lat - origin.lat) * 111320
+      };
+
+      return (
+        pointVector.east * destinationVector.east +
+        pointVector.north * destinationVector.north
+      ) / directDistance;
+    });
+    let furthestProgress = progressDistances[0];
+    let maximumBacktrackDistance = 0;
+
+    progressDistances.forEach((progressDistance) => {
+      maximumBacktrackDistance = Math.max(
+        maximumBacktrackDistance,
+        furthestProgress - progressDistance
+      );
+      furthestProgress = Math.max(furthestProgress, progressDistance);
+    });
+
+    const minimumProgress = Math.min(...progressDistances);
+    const maximumProgress = Math.max(...progressDistances);
+    const behindOriginDistance = Math.max(0, -minimumProgress);
+    const beyondDestinationDistance = Math.max(
+      0,
+      maximumProgress - directDistance
+    );
+    const endpointTolerance = Math.max(1500, directDistance * 0.12);
+    const backtrackTolerance = Math.max(3000, directDistance * 0.25);
+
+    return {
+      directDistance,
+      behindOriginDistance,
+      beyondDestinationDistance,
+      maximumBacktrackDistance,
+      isLargeReverse:
+        behindOriginDistance > endpointTolerance ||
+        beyondDestinationDistance > endpointTolerance ||
+        maximumBacktrackDistance > backtrackTolerance
+    };
+  }
+
+  function maximumRouteDeviationMeters(route, referenceRoute) {
+    const routePath = sampleRouteOverview(route, 80);
+    const referencePath = routeOverviewPoints(referenceRoute);
+
+    if (routePath.length < 2 || referencePath.length < 2) {
+      return 0;
+    }
+
+    return Math.max(
+      ...routePath.map((point) =>
+        minimumDistanceToPathMeters(point, referencePath)
+      )
+    );
+  }
+
+  function routeHasLoop(route) {
+    const path = sampleRouteOverview(route, 120);
+    if (path.length < 6) return false;
+
+    const cumulativeDistances = [0];
+    for (let index = 1; index < path.length; index += 1) {
+      cumulativeDistances.push(
+        cumulativeDistances[index - 1] +
+        distanceBetweenMeters(path[index - 1], path[index])
+      );
+    }
+
+    const totalDistance =
+      cumulativeDistances[cumulativeDistances.length - 1];
+    const minimumTravelDistance = Math.max(
+      2000,
+      totalDistance * 0.08
+    );
+    const revisitDistance = Math.min(
+      600,
+      Math.max(250, totalDistance * 0.005)
+    );
+
+    for (let firstIndex = 0; firstIndex < path.length - 3; firstIndex += 1) {
+      for (
+        let secondIndex = firstIndex + 3;
+        secondIndex < path.length;
+        secondIndex += 1
+      ) {
+        const traveledDistance =
+          cumulativeDistances[secondIndex] -
+          cumulativeDistances[firstIndex];
+
+        if (traveledDistance < minimumTravelDistance) continue;
+        if (
+          distanceBetweenMeters(
+            path[firstIndex],
+            path[secondIndex]
+          ) <= revisitDistance
+        ) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  function evaluateAutomaticRoutePracticality(route, referenceRoute) {
+    const routeTotals = sumRouteTotals(route);
+    const referenceTotals = sumRouteTotals(referenceRoute);
+    const durationRatio =
+      routeTotals.totalDuration /
+      Math.max(referenceTotals.totalDuration, 1);
+    const directionMetrics = routeDirectionMetrics(
+      route,
+      referenceRoute
+    );
+    const maximumDeviation = maximumRouteDeviationMeters(
+      route,
+      referenceRoute
+    );
+    const deviationLimit = Math.max(
+      5000,
+      Math.min(15000, referenceTotals.totalDistance * 0.25)
+    );
+    const hasLoop = routeHasLoop(route);
+    const rejectionReasons = [];
+
+    if (directionMetrics.isLargeReverse) {
+      rejectionReasons.push("逆方向への大きな進行");
+    }
+    if (maximumDeviation > deviationLimit) {
+      rejectionReasons.push("最短ルートから極端に離脱");
+    }
+    if (hasLoop) {
+      rejectionReasons.push("折り返し・ループ");
+    }
+    if (durationRatio > AUTO_ROUTE_MAX_DURATION_RATIO) {
+      rejectionReasons.push("所要時間1.3倍超過");
+    }
+
+    return {
+      accepted: rejectionReasons.length === 0,
+      rejectionReasons,
+      durationRatio,
+      directionMetrics,
+      maximumDeviation,
+      deviationLimit,
+      hasLoop
+    };
+  }
+
   function routePathCoverage(sourcePath, targetPath) {
     const sampleCount = Math.min(60, sourcePath.length);
     let nearbyPointCount = 0;
@@ -807,6 +1011,14 @@ function drawRouteOverlays() {
       簡易署名重複数: diagnostics.signatureDuplicateCount,
       形状重複数: diagnostics.shapeDuplicateCount,
       距離倍率除外数: diagnostics.distanceExcludedCount,
+      自動候補逆方向除外数:
+        diagnostics.automaticDirectionExcludedCount,
+      自動候補地域外れ除外数:
+        diagnostics.automaticDeviationExcludedCount,
+      自動候補ループ除外数:
+        diagnostics.automaticLoopExcludedCount,
+      自動候補時間超過除外数:
+        diagnostics.automaticDurationExcludedCount,
       自動通過点検索数: diagnostics.generatedViaRequestCount,
       最終採用数: diagnostics.finalAcceptedCount
     };
@@ -1755,6 +1967,10 @@ followToggle.checked = true;
       signatureDuplicateCount: 0,
       shapeDuplicateCount: 0,
       distanceExcludedCount: 0,
+      automaticDirectionExcludedCount: 0,
+      automaticDeviationExcludedCount: 0,
+      automaticLoopExcludedCount: 0,
+      automaticDurationExcludedCount: 0,
       generatedViaRequestCount: 0,
       finalAcceptedCount: 0,
       candidates: []
@@ -1795,7 +2011,8 @@ followToggle.checked = true;
       const evaluateCandidate = (
         candidate,
         source,
-        viaPointDescription = ""
+        viaPointDescription = "",
+        automaticPracticality = null
       ) => {
         const route = candidate.result.routes[candidate.routeIndex];
         const totals = sumRouteTotals(route);
@@ -1806,6 +2023,25 @@ followToggle.checked = true;
           自動通過点: viaPointDescription,
           距離km: Number((totals.totalDistance / 1000).toFixed(1)),
           距離倍率: "",
+          時間倍率: automaticPracticality
+            ? Number(automaticPracticality.durationRatio.toFixed(3))
+            : "",
+          最大逆行km: automaticPracticality
+            ? Number(
+                (
+                  automaticPracticality.directionMetrics
+                    .maximumBacktrackDistance / 1000
+                ).toFixed(1)
+              )
+            : "",
+          基準経路最大乖離km: automaticPracticality
+            ? Number(
+                (automaticPracticality.maximumDeviation / 1000).toFixed(1)
+              )
+            : "",
+          ループ検出: automaticPracticality
+            ? automaticPracticality.hasLoop
+            : "",
           最大形状重複率: "",
           形状差: "",
           判定: "評価中"
@@ -1813,6 +2049,42 @@ followToggle.checked = true;
 
         diagnostics.candidates.push(record);
         candidateRecords.set(candidate, record);
+
+        if (automaticPracticality && !automaticPracticality.accepted) {
+          if (
+            automaticPracticality.rejectionReasons.includes(
+              "逆方向への大きな進行"
+            )
+          ) {
+            diagnostics.automaticDirectionExcludedCount += 1;
+          }
+          if (
+            automaticPracticality.rejectionReasons.includes(
+              "最短ルートから極端に離脱"
+            )
+          ) {
+            diagnostics.automaticDeviationExcludedCount += 1;
+          }
+          if (
+            automaticPracticality.rejectionReasons.includes(
+              "折り返し・ループ"
+            )
+          ) {
+            diagnostics.automaticLoopExcludedCount += 1;
+          }
+          if (
+            automaticPracticality.rejectionReasons.includes(
+              "所要時間1.3倍超過"
+            )
+          ) {
+            diagnostics.automaticDurationExcludedCount += 1;
+          }
+
+          record.判定 =
+            `自動候補除外：` +
+            automaticPracticality.rejectionReasons.join("・");
+          return false;
+        }
 
         const signature = routeSignature(route);
         if (seenSignatures.has(signature)) {
@@ -1989,18 +2261,22 @@ followToggle.checked = true;
             const candidate = {
               mode: selectedPreference,
               result,
-              routeIndex
+              routeIndex,
+              isAutomatic: true
             };
             const viaPointDescription =
               `${Math.round(viaPoint.fraction * 100)}%・` +
               `${viaPoint.side === "left" ? "左" : "右"}・` +
               `${Math.round(viaPoint.offsetMeters / 1000)}km`;
+            const automaticPracticality =
+              evaluateAutomaticRoutePracticality(route, baseRoute);
 
             if (
               evaluateCandidate(
                 candidate,
                 "自動通過点",
-                viaPointDescription
+                viaPointDescription,
+                automaticPracticality
               )
             ) {
               generatedCandidates.push(candidate);
@@ -2124,6 +2400,11 @@ followToggle.checked = true;
         orderedModes.map((mode, index) => [mode, index])
       );
       reasonableCandidates.sort((a, b) => {
+        const automaticDifference =
+          Number(Boolean(a.isAutomatic)) -
+          Number(Boolean(b.isAutomatic));
+        if (automaticDifference !== 0) return automaticDifference;
+
         const modeDifference = modeOrder[a.mode] - modeOrder[b.mode];
         if (modeDifference !== 0) return modeDifference;
 
