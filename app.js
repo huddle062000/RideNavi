@@ -696,6 +696,21 @@ function drawRouteOverlays() {
 
       routePolyline.addListener("click", selectRoute);
       routePolylines.push(routePolyline);
+
+      if (segment.isHighway) {
+        const tollPolyline = new google.maps.Polyline({
+          map,
+          path: segment.path,
+          strokeColor: "#d93025",
+          strokeOpacity: isSelected ? 1 : 0.9,
+          strokeWeight: isSelected ? 8 : 4,
+          zIndex: isSelected ? 220 : 210 + index,
+          clickable: true
+        });
+
+        tollPolyline.addListener("click", selectRoute);
+        routePolylines.push(tollPolyline);
+      }
     });
 
     const routePath = route.overview_path || [];
