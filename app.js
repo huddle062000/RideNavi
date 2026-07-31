@@ -88,7 +88,10 @@
   const routeButtonIdleText =
     routeButton?.textContent || "🧭 3種類のルートを比較";
   let shareRouteButton = null;
-  let navigationButton = null;
+  const navigationButton = $("navigationButton");
+  const routeSummaryPanel = $("routeSummaryPanel");
+  const routeSummaryRoadType = $("routeSummaryRoadType");
+  const routeSummaryMetrics = $("routeSummaryMetrics");
   let navigationActive = false;
   let lastRouteResult = null;
   let navigationSteps = [];
@@ -137,9 +140,7 @@
   let routeCandidates = [];
   let selectedRouteMode = "local";
   let routePolylines = [];
-  let routeLabelMarkers = [];
   const routeSearchCache = new Map();
-  const mobileRouteDisplayQuery = window.matchMedia("(max-width: 480px)");
 
   function showStatus(message, autoHide = false) {
     if (!statusEl) return;
@@ -170,15 +171,6 @@
   function clearRouteOverlays() {
     routePolylines.forEach((polyline) => polyline.setMap(null));
     routePolylines = [];
-
-    routeLabelMarkers.forEach((marker) => marker.setMap(null));
-    routeLabelMarkers = [];
-  }
-
-  function routeMidpoint(route) {
-    const path = route?.overview_path || [];
-    if (!path.length) return null;
-    return path[Math.floor(path.length / 2)];
   }
 
   function updateRouteEndpointsSummary() {
@@ -649,108 +641,6 @@
     return segments;
   }
 
-function createRouteLabelOverlay(
-  position,
-  text,
-  isSelected,
-  onClick,
-  onNavigate
-) {
-  class RouteLabelOverlay extends google.maps.OverlayView {
-    constructor() {
-      super();
-      this.position = position;
-      this.text = text;
-      this.isSelected = isSelected;
-      this.onClick = onClick;
-      this.onNavigate = onNavigate;
-      this.element = null;
-    }
-
-    onAdd() {
-      const container = document.createElement("div");
-      const routeLabelButton = document.createElement("button");
-      const startNavigationButton = document.createElement("button");
-
-      routeLabelButton.type = "button";
-      routeLabelButton.textContent = this.text;
-      startNavigationButton.type = "button";
-      startNavigationButton.textContent = "ナビ開始";
-
-      Object.assign(container.style, {
-        position: "absolute",
-        transform: "translate(-50%, -50%)",
-        display: "flex",
-        alignItems: "stretch",
-        border: this.isSelected
-          ? "2px solid #1a73e8"
-          : "1px solid #dadce0",
-        borderRadius: "18px",
-        background: "#ffffff",
-        boxShadow: "0 2px 6px rgba(0, 0, 0, 0.25)",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        zIndex: this.isSelected ? "100" : "50"
-      });
-
-      Object.assign(routeLabelButton.style, {
-        padding: this.isSelected ? "8px 10px" : "6px 8px",
-        background: "#ffffff",
-        color: this.isSelected ? "#174ea6" : "#3c4043",
-        fontSize: this.isSelected ? "14px" : "12px",
-        fontWeight: "700"
-      });
-
-      Object.assign(startNavigationButton.style, {
-        padding: this.isSelected ? "8px 10px" : "6px 8px",
-        borderLeft: "1px solid #dadce0",
-        background: this.isSelected ? "#1a73e8" : "#e8f0fe",
-        color: this.isSelected ? "#ffffff" : "#174ea6",
-        fontSize: this.isSelected ? "13px" : "11px",
-        fontWeight: "700"
-      });
-
-      routeLabelButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        this.onClick();
-      });
-
-      startNavigationButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        this.onNavigate();
-      });
-
-      container.append(routeLabelButton, startNavigationButton);
-      this.element = container;
-      this.getPanes().floatPane.appendChild(container);
-
-      if (google.maps.OverlayView.preventMapHitsAndGesturesFrom) {
-        google.maps.OverlayView.preventMapHitsAndGesturesFrom(container);
-      }
-    }
-
-    draw() {
-      if (!this.element) return;
-
-      const projection = this.getProjection();
-      const point = projection.fromLatLngToDivPixel(this.position);
-
-      if (!point) return;
-
-      this.element.style.left = `${point.x}px`;
-      this.element.style.top = `${point.y}px`;
-    }
-
-    onRemove() {
-      this.element?.remove();
-      this.element = null;
-    }
-  }
-
-  const overlay = new RouteLabelOverlay(position, text, isSelected, onClick);
-  overlay.setMap(map);
-  return overlay;
-}
 function drawRouteOverlays() {
   clearRouteOverlays();
 
@@ -760,11 +650,6 @@ function drawRouteOverlays() {
 
     const selectRoute = () => {
       applyRouteCandidate(index);
-    };
-
-    const navigateRoute = () => {
-      applyRouteCandidate(index, false);
-      startNavigation();
     };
 
     const outlinePolyline = new google.maps.Polyline({
@@ -803,25 +688,6 @@ function drawRouteOverlays() {
       routePolylines.push(routePolyline);
     });
 
-    if (mobileRouteDisplayQuery.matches && !isSelected) return;
-
-    const midpoint = routeMidpoint(route);
-    if (!midpoint) return;
-
-    const totals = sumRouteTotals(route);
-
-    const labelOverlay = createRouteLabelOverlay(
-      midpoint,
-      `候補${index + 1} ${routeModeShortLabel(candidate.mode)} 約${Math.max(
-        1,
-        Math.round(totals.totalDuration / 60)
-      )}分・${formatDistance(totals.totalDistance)}`,
-      isSelected,
-      selectRoute,
-      navigateRoute
-    );
-
-    routeLabelMarkers.push(labelOverlay);
   });
 }
 
@@ -861,6 +727,18 @@ function drawRouteOverlays() {
       local: "一般道"
     };
     return labels[mode] || "ルート";
+  }
+
+  function updateRouteSummaryPanel(mode, totals) {
+    if (!routeSummaryPanel || !routeSummaryRoadType || !routeSummaryMetrics) {
+      return;
+    }
+
+    routeSummaryRoadType.textContent = routeModeShortLabel(mode);
+    routeSummaryMetrics.textContent =
+      `${formatDuration(totals.totalDuration)}・` +
+      formatDistance(totals.totalDistance);
+    routeSummaryPanel.hidden = false;
   }
 
   function routeShapeSortKey(route) {
@@ -1458,6 +1336,7 @@ function drawRouteOverlays() {
 
     const totals = sumRouteTotals(route);
     updateNavigationInfoPanel(route);
+    updateRouteSummaryPanel(candidate.mode, totals);
 
     if (navigationButton) {
       navigationButton.disabled = navigationSteps.length === 0;
@@ -1602,6 +1481,7 @@ function showRouteChoices(candidates, searchId) {
     routeCandidates = [];
     selectedRouteIndex = 0;
     hideNavigationInfoPanel();
+    if (routeSummaryPanel) routeSummaryPanel.hidden = true;
     if (navigationButton) navigationButton.disabled = true;
     if (directionsRenderer) {
       directionsRenderer.setDirections({ routes: [] });
@@ -2094,6 +1974,7 @@ followToggle.checked = true;
       const route = result.routes[0];
       const totals = sumRouteTotals(route);
       updateNavigationInfoPanel(route);
+      updateRouteSummaryPanel(selectedRouteMode, totals);
 
       routeInfo.innerHTML =
         `距離：${formatDistance(totals.totalDistance)}<br>` +
@@ -2106,17 +1987,10 @@ followToggle.checked = true;
   }
 
   function createNavigationButton() {
-    if (!routeButton || navigationButton) return;
+    if (!navigationButton) return;
 
-    navigationButton = document.createElement("button");
-    navigationButton.id = "navigationButton";
-    navigationButton.type = "button";
-    navigationButton.className = "primary";
-    navigationButton.textContent = "▶ ナビ開始";
     hideNavigationInfoPanel();
     navigationButton.disabled = true;
-
-    routeButton.insertAdjacentElement("afterend", navigationButton);
     navigationButton.addEventListener("click", toggleNavigation);
   }
 
@@ -3563,10 +3437,6 @@ followToggle.checked = true;
   });
 
   destinationInput?.addEventListener("input", updateRouteEndpointsSummary);
-
-  mobileRouteDisplayQuery.addEventListener?.("change", () => {
-    if (routeCandidates.length) drawRouteOverlays();
-  });
 
   createNavigationButton();
   createShareButton();

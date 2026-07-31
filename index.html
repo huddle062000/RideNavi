@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
   
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=2.3.3">
 </head>
 <body>
   <main id="app">
@@ -100,11 +100,18 @@
     </section>
 
     <div id="status" class="status">地図を読み込んでいます…</div>
+    <section id="routeSummaryPanel" class="route-summary-panel" aria-label="選択中のルート情報" hidden>
+      <div class="route-summary-details">
+        <strong id="routeSummaryRoadType">道路種類</strong>
+        <span id="routeSummaryMetrics">時間・距離</span>
+      </div>
+      <button id="navigationButton" type="button" disabled>▶ ナビ開始</button>
+    </section>
     <button id="floatingLocationButton" class="floating-location" type="button" aria-label="現在地へ">◎</button>
   </main>
 
   <script src="config.js"></script>
   <script src="src/map.js"></script>
-<script src="app.js?v=2.3.2"></script>
+<script src="app.js?v=2.3.3"></script>
 </body>
 </html>
