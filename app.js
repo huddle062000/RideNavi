@@ -79,6 +79,7 @@
   const closePanelButton = $("closePanelButton");
   const originInput = $("originInput");
   const destinationInput = $("destinationInput");
+  const routeEndpointsSummary = $("routeEndpointsSummary");
   const useCurrentLocationButton = $("useCurrentLocationButton");
   const addWaypointButton = $("addWaypointButton");
   const waypointList = $("waypointList");
@@ -177,6 +178,15 @@
     const path = route?.overview_path || [];
     if (!path.length) return null;
     return path[Math.floor(path.length / 2)];
+  }
+
+  function updateRouteEndpointsSummary() {
+    if (!routeEndpointsSummary) return;
+
+    const origin = originInput?.value.trim() || "出発地未設定";
+    const destination = destinationInput?.value.trim() || "到着地未設定";
+    routeEndpointsSummary.textContent = `${origin} → ${destination}`;
+    routeEndpointsSummary.title = routeEndpointsSummary.textContent;
   }
 
   function matchesGuidancePattern(instruction, patterns) {
@@ -638,7 +648,13 @@
     return segments;
   }
 
-function createRouteLabelOverlay(position, text, isSelected, onClick) {
+function createRouteLabelOverlay(
+  position,
+  text,
+  isSelected,
+  onClick,
+  onNavigate
+) {
   class RouteLabelOverlay extends google.maps.OverlayView {
     constructor() {
       super();
@@ -646,43 +662,69 @@ function createRouteLabelOverlay(position, text, isSelected, onClick) {
       this.text = text;
       this.isSelected = isSelected;
       this.onClick = onClick;
+      this.onNavigate = onNavigate;
       this.element = null;
     }
 
     onAdd() {
-      const button = document.createElement("button");
+      const container = document.createElement("div");
+      const routeLabelButton = document.createElement("button");
+      const startNavigationButton = document.createElement("button");
 
-      button.type = "button";
-      button.textContent = this.text;
+      routeLabelButton.type = "button";
+      routeLabelButton.textContent = this.text;
+      startNavigationButton.type = "button";
+      startNavigationButton.textContent = "ナビ開始";
 
-      Object.assign(button.style, {
+      Object.assign(container.style, {
         position: "absolute",
         transform: "translate(-50%, -50%)",
-        padding: this.isSelected ? "8px 12px" : "6px 10px",
+        display: "flex",
+        alignItems: "stretch",
         border: this.isSelected
           ? "2px solid #1a73e8"
           : "1px solid #dadce0",
         borderRadius: "18px",
         background: "#ffffff",
-        color: this.isSelected ? "#174ea6" : "#3c4043",
         boxShadow: "0 2px 6px rgba(0, 0, 0, 0.25)",
-        fontSize: this.isSelected ? "14px" : "12px",
-        fontWeight: "700",
         whiteSpace: "nowrap",
-        cursor: "pointer",
+        overflow: "hidden",
         zIndex: this.isSelected ? "100" : "50"
       });
 
-      button.addEventListener("click", (event) => {
+      Object.assign(routeLabelButton.style, {
+        padding: this.isSelected ? "8px 10px" : "6px 8px",
+        background: "#ffffff",
+        color: this.isSelected ? "#174ea6" : "#3c4043",
+        fontSize: this.isSelected ? "14px" : "12px",
+        fontWeight: "700"
+      });
+
+      Object.assign(startNavigationButton.style, {
+        padding: this.isSelected ? "8px 10px" : "6px 8px",
+        borderLeft: "1px solid #dadce0",
+        background: this.isSelected ? "#1a73e8" : "#e8f0fe",
+        color: this.isSelected ? "#ffffff" : "#174ea6",
+        fontSize: this.isSelected ? "13px" : "11px",
+        fontWeight: "700"
+      });
+
+      routeLabelButton.addEventListener("click", (event) => {
         event.stopPropagation();
         this.onClick();
       });
 
-      this.element = button;
-      this.getPanes().floatPane.appendChild(button);
+      startNavigationButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.onNavigate();
+      });
+
+      container.append(routeLabelButton, startNavigationButton);
+      this.element = container;
+      this.getPanes().floatPane.appendChild(container);
 
       if (google.maps.OverlayView.preventMapHitsAndGesturesFrom) {
-        google.maps.OverlayView.preventMapHitsAndGesturesFrom(button);
+        google.maps.OverlayView.preventMapHitsAndGesturesFrom(container);
       }
     }
 
@@ -717,6 +759,11 @@ function drawRouteOverlays() {
 
     const selectRoute = () => {
       applyRouteCandidate(index);
+    };
+
+    const navigateRoute = () => {
+      applyRouteCandidate(index, false);
+      startNavigation();
     };
 
     const outlinePolyline = new google.maps.Polyline({
@@ -762,9 +809,13 @@ function drawRouteOverlays() {
 
     const labelOverlay = createRouteLabelOverlay(
       midpoint,
-      `候補${index + 1}　${formatDuration(totals.totalDuration)}・${formatDistance(totals.totalDistance)}`,
+      `候補${index + 1} ${routeModeShortLabel(candidate.mode)} 約${Math.max(
+        1,
+        Math.round(totals.totalDuration / 60)
+      )}分・${formatDistance(totals.totalDistance)}`,
       isSelected,
-      selectRoute
+      selectRoute,
+      navigateRoute
     );
 
     routeLabelMarkers.push(labelOverlay);
@@ -798,6 +849,15 @@ function drawRouteOverlays() {
       Math.round(totals.totalDistance / 500),
       Math.round(totals.totalDuration / 300)
     ].join("|");
+  }
+
+  function routeModeShortLabel(mode) {
+    const labels = {
+      highway: "高速優先",
+      partial: "一部有料",
+      local: "一般道"
+    };
+    return labels[mode] || "ルート";
   }
 
   function routeShapeSortKey(route) {
@@ -1653,6 +1713,7 @@ function showRouteChoices(candidates, searchId) {
     }
 
     originInput.value = "現在地";
+    updateRouteEndpointsSummary();
     showStatus("現在地を出発地にしました", true);
   }
 
@@ -2212,6 +2273,7 @@ followToggle.checked = true;
 
     originInput.value = origin;
     destinationInput.value = destination;
+    updateRouteEndpointsSummary();
     if (mode && ["highway", "partial", "local"].includes(mode)) {
       selectedRouteMode = mode;
       const routeModeSelect = $("routeMode");
@@ -3425,6 +3487,7 @@ followToggle.checked = true;
         }
 
         destinationInput.value = `${lat},${lng}`;
+        updateRouteEndpointsSummary();
         showStatus("📍 目的地を設定しました。ルートを比較します…");
         searchRoute();
       });
@@ -3490,14 +3553,19 @@ followToggle.checked = true;
     if (event.key === "Enter") searchRoute();
   });
 
+  originInput?.addEventListener("input", updateRouteEndpointsSummary);
+
   destinationInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") searchRoute();
   });
+
+  destinationInput?.addEventListener("input", updateRouteEndpointsSummary);
 
   createNavigationButton();
   createShareButton();
   updateWaypointDisplay();
   updateRouteInfoEmpty();
   loadRouteFromUrl();
+  updateRouteEndpointsSummary();
   loadGoogleMaps();
 })();
