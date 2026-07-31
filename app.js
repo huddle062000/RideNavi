@@ -236,7 +236,7 @@ function drawRouteOverlays() {
   function routeModeLabel(mode) {
     const labels = {
       highway: "🚀 高速優先",
-      partial: "🛣️ 一部高速候補",
+      partial: "🛣️ 無料高速OK",
       local: "🌿 一般道"
     };
     return labels[mode] || "ルート";
@@ -1170,6 +1170,8 @@ followToggle.checked = true;
     destinationInput.value = destination;
     if (mode && ["highway", "partial", "local"].includes(mode)) {
       selectedRouteMode = mode;
+      const routeModeSelect = $("routeMode");
+      if (routeModeSelect) routeModeSelect.value = mode;
     }
     waypointList.innerHTML = "";
 
@@ -1247,7 +1249,7 @@ followToggle.checked = true;
     routeSearching = true;
     routeButton.disabled = true;
     routeButton.textContent = "3種類を検索中…";
-    showStatus("高速・一部高速・一般道を比較しています…");
+    showStatus("高速優先・無料高速OK・一般道を比較しています…");
     hideRouteChoices();
 
     try {
