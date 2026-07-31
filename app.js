@@ -8,6 +8,7 @@
   const AUTO_ROUTE_MAX_OFFSET_METERS = 12000;
   const AUTO_ROUTE_OFFSET_RATIO = 0.08;
   const AUTO_ROUTE_MAX_DURATION_RATIO = 1.3;
+  const ROUTE_SEARCH_CACHE_LIMIT = 12;
   const HIGHWAY_GUIDANCE_PATTERNS = {
     entry: [
       /(?:高速|自動車道|有料道路|都市高速).*(?:入る|進入|合流)/,
@@ -62,6 +63,8 @@
   const waypointList = $("waypointList");
   const waypointCount = $("waypointCount");
   const routeButton = $("routeButton");
+  const routeButtonIdleText =
+    routeButton?.textContent || "🧭 3種類のルートを比較";
   let shareRouteButton = null;
   let navigationButton = null;
   let navigationActive = false;
@@ -105,12 +108,14 @@
   let statusTimer = null;
   let routeSearching = false;
   let latestRouteSearchId = 0;
+  let displayedRouteSearchId = 0;
   let routeChoicePanel = null;
   let selectedRouteIndex = 0;
   let routeCandidates = [];
   let selectedRouteMode = "highway";
   let routePolylines = [];
   let routeLabelMarkers = [];
+  const routeSearchCache = new Map();
 
   function showStatus(message, autoHide = false) {
     if (!statusEl) return;
@@ -1039,6 +1044,8 @@ function drawRouteOverlays() {
   }
 
   function applyRouteCandidate(candidateIndex, announce = true) {
+    if (displayedRouteSearchId !== latestRouteSearchId) return;
+
     const candidate = routeCandidates[candidateIndex];
     if (!candidate) return;
 
@@ -1098,13 +1105,17 @@ function drawRouteOverlays() {
     }
   }
 
-function showRouteChoices(candidates) {
+function showRouteChoices(candidates, searchId) {
+  if (searchId !== latestRouteSearchId) return false;
+
   hideRouteChoices();
 
+  displayedRouteSearchId = searchId;
   routeCandidates = candidates;
   selectedRouteIndex = 0;
 
   applyRouteCandidate(0, false);
+  return true;
 }
 
 
@@ -1204,6 +1215,7 @@ function showRouteChoices(candidates) {
     rerouteInProgress = false;
     hideRouteChoices();
     clearRouteOverlays();
+    displayedRouteSearchId = 0;
     routeCandidates = [];
     selectedRouteIndex = 0;
     hideNavigationInfoPanel();
@@ -1896,6 +1908,59 @@ followToggle.checked = true;
     return true;
   }
 
+  function routeSearchLocationKey(location) {
+    if (typeof location === "string") return location.trim();
+
+    const latitude =
+      typeof location?.lat === "function" ? location.lat() : location?.lat;
+    const longitude =
+      typeof location?.lng === "function" ? location.lng() : location?.lng;
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return String(location || "");
+    }
+
+    return `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+  }
+
+  function routeSearchCacheKey({
+    origin,
+    destination,
+    waypointValues,
+    mode
+  }) {
+    return JSON.stringify({
+      origin: routeSearchLocationKey(origin),
+      destination: destination.trim(),
+      waypoints: waypointValues.map((value) => value.trim()),
+      mode
+    });
+  }
+
+  function cachedRouteCandidates(cacheKey) {
+    const candidates = routeSearchCache.get(cacheKey);
+    if (!candidates) return null;
+
+    routeSearchCache.delete(cacheKey);
+    routeSearchCache.set(cacheKey, candidates);
+    return candidates.slice();
+  }
+
+  function cacheRouteCandidates(cacheKey, candidates) {
+    routeSearchCache.delete(cacheKey);
+    routeSearchCache.set(cacheKey, candidates.slice());
+
+    while (routeSearchCache.size > ROUTE_SEARCH_CACHE_LIMIT) {
+      const oldestKey = routeSearchCache.keys().next().value;
+      routeSearchCache.delete(oldestKey);
+    }
+  }
+
+  function resetRouteSearchState(mode) {
+    clearDisplayedRoute(false);
+    selectedRouteMode = mode;
+  }
+
   function routeRequest(origin, destination, waypoints, mode) {
     const hasWaypoints = waypoints.length > 0;
 
@@ -1931,11 +1996,11 @@ followToggle.checked = true;
       return;
     }
 
-    if (routeSearching) return;
-
     const originText = originInput.value.trim();
     const destinationText = destinationInput.value.trim();
     const waypointValues = getWaypointValues();
+    const selectedPreference =
+      document.getElementById("routeMode")?.value || "highway";
 
     if (!originText || !destinationText) {
       showStatus("出発地と目的地を入力してください");
@@ -1957,6 +2022,12 @@ followToggle.checked = true;
       location,
       stopover: true
     }));
+    const cacheKey = routeSearchCacheKey({
+      origin,
+      destination: destinationText,
+      waypointValues,
+      mode: selectedPreference
+    });
 
     const searchId = ++latestRouteSearchId;
     const diagnostics = {
@@ -1976,14 +2047,26 @@ followToggle.checked = true;
       candidates: []
     };
     routeSearching = true;
-    const idleRouteButtonText = routeButton.textContent;
     routeButton.disabled = true;
     routeButton.textContent = "ルートを検索中…";
+    resetRouteSearchState(selectedPreference);
     showStatus("高速優先・無料高速OK・一般道を比較しています…");
 
     try {
-      const selectedPreference =
-        document.getElementById("routeMode")?.value || "highway";
+      const cachedCandidates = cachedRouteCandidates(cacheKey);
+
+      if (cachedCandidates) {
+        if (searchId !== latestRouteSearchId) return;
+
+        diagnostics.finalAcceptedCount = cachedCandidates.length;
+        showRouteChoices(cachedCandidates, searchId);
+        closePanel();
+        showStatus(
+          `${cachedCandidates.length}件のルート候補が見つかりました`,
+          true
+        );
+        return;
+      }
 
       const modes =
         selectedPreference === "local"
@@ -2389,8 +2472,7 @@ followToggle.checked = true;
         }
       }
 
-      const preferredMode =
-        document.getElementById("routeMode")?.value || "highway";
+      const preferredMode = selectedPreference;
       const baseOrder = ["highway", "partial", "local"];
       const orderedModes = [
         preferredMode,
@@ -2416,7 +2498,8 @@ followToggle.checked = true;
       if (searchId !== latestRouteSearchId) return;
 
       diagnostics.finalAcceptedCount = reasonableCandidates.length;
-      showRouteChoices(reasonableCandidates);
+      cacheRouteCandidates(cacheKey, reasonableCandidates);
+      showRouteChoices(reasonableCandidates, searchId);
       closePanel();
       showStatus(`${reasonableCandidates.length}件のルート候補が見つかりました`, true);
     } catch (error) {
@@ -2425,12 +2508,11 @@ followToggle.checked = true;
       console.error("Directions route error:", error);
       showStatus("ルート候補の検索に失敗しました");
     } finally {
-      logRouteSearchDiagnostics(diagnostics);
-
       if (searchId === latestRouteSearchId) {
+        logRouteSearchDiagnostics(diagnostics);
         routeSearching = false;
         routeButton.disabled = false;
-        routeButton.textContent = idleRouteButtonText;
+        routeButton.textContent = routeButtonIdleText;
       }
     }
   }
