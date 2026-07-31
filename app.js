@@ -652,38 +652,49 @@ function drawRouteOverlays() {
   routeCandidates.forEach((candidate, index) => {
     const route = candidate.result.routes[candidate.routeIndex];
     const isSelected = index === selectedRouteIndex;
+    const colorSegments = routeColorSegments(route, {
+      candidateNumber: index + 1,
+      mode: candidate.mode
+    });
+    const drawableSegments = colorSegments.length
+      ? colorSegments
+      : [{ path: route.overview_path, isHighway: false }];
 
     const selectRoute = () => {
       applyRouteCandidate(index);
     };
 
-    if (isSelected) {
-      const outlinePolyline = new google.maps.Polyline({
+    drawableSegments.forEach((segment) => {
+      if (isSelected) {
+        const outlinePolyline = new google.maps.Polyline({
+          map,
+          path: segment.path,
+          strokeColor: "#ffffff",
+          strokeOpacity: 0.98,
+          strokeWeight: 14,
+          zIndex: 190,
+          clickable: true
+        });
+
+        outlinePolyline.addListener("click", selectRoute);
+        routePolylines.push(outlinePolyline);
+      }
+
+      const routePolyline = new google.maps.Polyline({
         map,
-        path: route.overview_path,
-        strokeColor: "#ffffff",
-        strokeOpacity: 0.98,
-        strokeWeight: 14,
-        zIndex: 90,
+        path: segment.path,
+        strokeColor: segment.isHighway
+          ? isSelected ? "#d93025" : "#f28b82"
+          : isSelected ? "#0b57d0" : "#8ab4f8",
+        strokeOpacity: isSelected ? 1 : 0.72,
+        strokeWeight: isSelected ? 10 : 5,
+        zIndex: isSelected ? 200 : 20 + index,
         clickable: true
       });
 
-      outlinePolyline.addListener("click", selectRoute);
-      routePolylines.push(outlinePolyline);
-    }
-
-    const routePolyline = new google.maps.Polyline({
-      map,
-      path: route.overview_path,
-      strokeColor: isSelected ? "#0b57d0" : "#8ab4f8",
-      strokeOpacity: isSelected ? 1 : 0.9,
-      strokeWeight: isSelected ? 10 : 6,
-      zIndex: isSelected ? 100 : 20 + index,
-      clickable: true
+      routePolyline.addListener("click", selectRoute);
+      routePolylines.push(routePolyline);
     });
-
-    routePolyline.addListener("click", selectRoute);
-    routePolylines.push(routePolyline);
 
   });
 }
