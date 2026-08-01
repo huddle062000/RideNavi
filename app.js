@@ -655,7 +655,7 @@ function drawRouteOverlays() {
   routeCandidates.forEach((candidate, index) => {
     const route = candidate.result.routes[candidate.routeIndex];
     const isSelected = index === selectedRouteIndex;
-    const routeColor = isSelected ? "#102a43" : "#0b57d0";
+    const routeColor = isSelected ? "#102a43" : "#0057b8";
     const colorSegments = routeColorSegments(route, {
       candidateNumber: index + 1,
       mode: candidate.mode
@@ -688,7 +688,7 @@ function drawRouteOverlays() {
         map,
         path: segment.path,
         strokeColor: routeColor,
-        strokeOpacity: isSelected ? 1 : 0.72,
+        strokeOpacity: 1,
         strokeWeight: isSelected ? 10 : 5,
         zIndex: isSelected ? 200 : 20 + index,
         clickable: true
@@ -739,7 +739,8 @@ function drawRouteOverlays() {
           strokeWeight: 2
         },
         title: `ルート${routeCandidateNumber(index)}`,
-        zIndex: isSelected ? 240 : 60 + index,
+        zIndex: isSelected ? 270 : 260 + index,
+        optimized: false,
         clickable: true
       });
 
