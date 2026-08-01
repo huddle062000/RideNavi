@@ -85,9 +85,7 @@
   const routeEndpointsSummary = $("routeEndpointsSummary");
   const useCurrentLocationButton = $("useCurrentLocationButton");
   const addWaypointButton = $("addWaypointButton");
-  const topCurrentLocationButton = $("topCurrentLocationButton");
   const topDestinationButton = $("topDestinationButton");
-  const topAddWaypointButton = $("topAddWaypointButton");
   const topMapButton = $("topMapButton");
   const destinationMapButton = $("destinationMapButton");
   const waypointList = $("waypointList");
@@ -1543,8 +1541,12 @@ function showRouteChoices(candidates, searchId) {
       if (input) input.placeholder = `経由地${index + 1}　例：道の駅`;
     });
 
-    waypointCount.textContent = `${rows.length} / ${MAX_WAYPOINTS}`;
-    addWaypointButton.disabled = rows.length >= MAX_WAYPOINTS;
+    if (waypointCount) {
+      waypointCount.textContent = `${rows.length} / ${MAX_WAYPOINTS}`;
+    }
+    if (addWaypointButton) {
+      addWaypointButton.disabled = rows.length >= MAX_WAYPOINTS;
+    }
   }
 
   function addWaypoint(value = "") {
@@ -2301,14 +2303,12 @@ followToggle.checked = true;
 
   function loadRouteFromUrl() {
     const params = new URLSearchParams(window.location.search);
-    const origin = params.get("o");
     const destination = params.get("d");
-    const waypoints = params.getAll("w").slice(0, MAX_WAYPOINTS);
     const mode = params.get("mode");
 
-    if (!origin || !destination) return false;
+    if (!destination) return false;
 
-    originInput.value = origin;
+    originInput.value = "現在地";
     destinationInput.value = destination;
     updateRouteEndpointsSummary();
     if (mode && ["highway", "partial", "local"].includes(mode)) {
@@ -2317,8 +2317,6 @@ followToggle.checked = true;
       if (routeModeSelect) routeModeSelect.value = mode;
     }
     waypointList.innerHTML = "";
-
-    waypoints.forEach((waypoint) => addWaypoint(waypoint));
 
     updateWaypointDisplay();
     updateRouteInfoEmpty();
@@ -3545,14 +3543,9 @@ followToggle.checked = true;
   closePanelButton?.addEventListener("click", closePanel);
   useCurrentLocationButton?.addEventListener("click", useCurrentLocationAsOrigin);
   addWaypointButton?.addEventListener("click", () => addWaypoint());
-  topCurrentLocationButton?.addEventListener("click", useCurrentLocationAsOrigin);
   topDestinationButton?.addEventListener("click", () => {
     openPanel();
     destinationInput?.focus();
-  });
-  topAddWaypointButton?.addEventListener("click", () => {
-    openPanel();
-    addWaypoint();
   });
   topMapButton?.addEventListener("click", () => {
     startMapSelection(destinationInput, "目的地", topMapButton);
