@@ -10,18 +10,24 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
   
-  <link rel="stylesheet" href="style.css?v=2.3.7">
+  <link rel="stylesheet" href="style.css?v=2.3.8">
 </head>
 <body>
   <main id="app">
     <div id="map"></div>
 
     <header class="top-bar">
-      <div>
+      <div class="top-bar-heading">
         <strong>🏍 Ride Navi</strong>
-        <span id="routeEndpointsSummary">出発地未設定 → 到着地未設定</span>
+        <button id="menuButton" type="button" aria-label="メニュー">☰</button>
       </div>
-      <button id="menuButton" type="button" aria-label="メニュー">☰</button>
+      <div class="top-route-controls" aria-label="ルート地点の操作">
+        <button id="topCurrentLocationButton" type="button">現在地</button>
+        <button id="topDestinationButton" type="button">目的地</button>
+        <button id="topAddWaypointButton" type="button" aria-label="経由地を追加">＋</button>
+        <button id="topMapButton" type="button">MAP</button>
+      </div>
+      <span id="routeEndpointsSummary">出発地未設定 → 到着地未設定</span>
     </header>
 
     <section id="controlPanel" class="control-panel is-hidden">
@@ -52,7 +58,10 @@
 
       <label class="field">
         <span>目的地</span>
-        <input id="destinationInput" type="text" placeholder="例：道の駅 美山ふれあい広場">
+        <div class="location-input-row">
+          <input id="destinationInput" type="text" placeholder="例：道の駅 美山ふれあい広場">
+          <button id="destinationMapButton" class="map-select-button" type="button">MAP</button>
+        </div>
       </label>
 <label class="field">
         <span>最初に表示する候補</span>
@@ -116,6 +125,6 @@
 
   <script src="config.js"></script>
   <script src="src/map.js"></script>
-<script src="app.js?v=2.3.11"></script>
+<script src="app.js?v=2.3.12"></script>
 </body>
 </html>

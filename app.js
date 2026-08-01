@@ -85,6 +85,11 @@
   const routeEndpointsSummary = $("routeEndpointsSummary");
   const useCurrentLocationButton = $("useCurrentLocationButton");
   const addWaypointButton = $("addWaypointButton");
+  const topCurrentLocationButton = $("topCurrentLocationButton");
+  const topDestinationButton = $("topDestinationButton");
+  const topAddWaypointButton = $("topAddWaypointButton");
+  const topMapButton = $("topMapButton");
+  const destinationMapButton = $("destinationMapButton");
   const waypointList = $("waypointList");
   const waypointCount = $("waypointCount");
   const routeButton = $("routeButton");
@@ -134,6 +139,7 @@
   let currentPosition = null;
   let userMarker = null;
   let destinationMarker = null;
+  let mapSelectionTarget = null;
   let accuracyCircle = null;
   let statusTimer = null;
   let routeSearching = false;
@@ -188,6 +194,44 @@
     const destination = destinationInput?.value.trim() || "到着地未設定";
     routeEndpointsSummary.textContent = `${origin} → ${destination}`;
     routeEndpointsSummary.title = routeEndpointsSummary.textContent;
+  }
+
+  function cancelMapSelection(showMessage = false) {
+    mapSelectionTarget = null;
+    map?.getDiv().classList.remove("map-selection-active");
+    topMapButton?.setAttribute("aria-pressed", "false");
+    destinationMapButton?.setAttribute("aria-pressed", "false");
+    waypointList
+      ?.querySelectorAll(".map-select-button")
+      .forEach((button) => button.setAttribute("aria-pressed", "false"));
+
+    if (showMessage) showStatus("MAP選択を解除しました", true);
+  }
+
+  function startMapSelection(input, label, button = null) {
+    if (!map || !input) {
+      showStatus("地図を読み込んでいます");
+      return;
+    }
+
+    if (mapSelectionTarget?.input === input) {
+      cancelMapSelection(true);
+      return;
+    }
+
+    cancelMapSelection();
+    mapSelectionTarget = {
+      input,
+      label,
+      isDestination: input === destinationInput
+    };
+    map.getDiv().classList.add("map-selection-active");
+    button?.setAttribute("aria-pressed", "true");
+    if (input === destinationInput) {
+      topMapButton?.setAttribute("aria-pressed", "true");
+      destinationMapButton?.setAttribute("aria-pressed", "true");
+    }
+    showStatus(`地図上で${label}をタップしてください`);
   }
 
   function matchesGuidancePattern(instruction, patterns) {
@@ -1529,7 +1573,19 @@ function showRouteChoices(candidates, searchId) {
     removeButton.textContent = "✕";
     removeButton.setAttribute("aria-label", "経由地を削除");
 
+    const mapButton = document.createElement("button");
+    mapButton.type = "button";
+    mapButton.className = "map-select-button";
+    mapButton.textContent = "MAP";
+    mapButton.setAttribute("aria-label", "地図から経由地を選択");
+    mapButton.setAttribute("aria-pressed", "false");
+
+    mapButton.addEventListener("click", () => {
+      startMapSelection(input, `経由地${number.textContent}`, mapButton);
+    });
+
     removeButton.addEventListener("click", () => {
+      if (mapSelectionTarget?.input === input) cancelMapSelection();
       row.remove();
       updateWaypointDisplay();
       updateRouteInfoEmpty();
@@ -1542,7 +1598,7 @@ function showRouteChoices(candidates, searchId) {
       }
     });
 
-    row.append(number, input, removeButton);
+    row.append(number, input, mapButton, removeButton);
     waypointList.appendChild(row);
 
     updateWaypointDisplay();
@@ -3415,32 +3471,28 @@ followToggle.checked = true;
       });
 
       map.addListener("click", (event) => {
-        if (!event.latLng) return;
+        if (!event.latLng || !mapSelectionTarget) return;
 
         const lat = event.latLng.lat().toFixed(6);
         const lng = event.latLng.lng().toFixed(6);
+        const { input, label, isDestination } = mapSelectionTarget;
 
-        const useAsDestination = window.confirm(
-          "📍 ここを目的地にして、3種類のルートを比較しますか？"
-        );
-
-        if (!useAsDestination) return;
-
-        if (!destinationMarker) {
+        if (isDestination && !destinationMarker) {
           destinationMarker = new google.maps.Marker({
             map,
             position: event.latLng,
             title: "目的地",
             animation: google.maps.Animation.DROP
           });
-        } else {
+        } else if (isDestination) {
           destinationMarker.setPosition(event.latLng);
         }
 
-        destinationInput.value = `${lat},${lng}`;
+        input.value = `${lat},${lng}`;
         updateRouteEndpointsSummary();
-        showStatus("📍 目的地を設定しました。ルートを比較します…");
-        searchRoute();
+        updateRouteInfoEmpty();
+        cancelMapSelection();
+        showStatus(`📍 ${label}を設定しました`, true);
       });
 
       trafficLayer = new google.maps.TrafficLayer();
@@ -3492,7 +3544,22 @@ followToggle.checked = true;
 
   closePanelButton?.addEventListener("click", closePanel);
   useCurrentLocationButton?.addEventListener("click", useCurrentLocationAsOrigin);
-  addWaypointButton?.addEventListener("click", addWaypoint);
+  addWaypointButton?.addEventListener("click", () => addWaypoint());
+  topCurrentLocationButton?.addEventListener("click", useCurrentLocationAsOrigin);
+  topDestinationButton?.addEventListener("click", () => {
+    openPanel();
+    destinationInput?.focus();
+  });
+  topAddWaypointButton?.addEventListener("click", () => {
+    openPanel();
+    addWaypoint();
+  });
+  topMapButton?.addEventListener("click", () => {
+    startMapSelection(destinationInput, "目的地", topMapButton);
+  });
+  destinationMapButton?.addEventListener("click", () => {
+    startMapSelection(destinationInput, "目的地", destinationMapButton);
+  });
   routeButton?.addEventListener("click", searchRoute);
   clearRouteButton?.addEventListener("click", () => clearDisplayedRoute(true));
   locationButton?.addEventListener("click", centerOnCurrentLocation);
