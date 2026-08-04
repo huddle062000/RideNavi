@@ -92,7 +92,7 @@
   const waypointCount = $("waypointCount");
   const routeButton = $("routeButton");
   const routeButtonIdleText =
-    routeButton?.textContent || "🧭 3種類のルートを比較";
+    routeButton?.textContent || "🧭 ルート候補を検索";
   let shareRouteButton = null;
   const navigationButton = $("navigationButton");
   const routeSummaryPanel = $("routeSummaryPanel");
@@ -2864,19 +2864,13 @@ followToggle.checked = true;
         uniqueCandidates,
         initialShortestDistance
       );
-      const automaticCandidatesNeeded = Math.max(
-        0,
-        3 - reasonableCandidates.length
-      );
+      const automaticCandidatesNeeded = 0;
 
       diagnostics.automaticSearchInitialCandidateCount =
         reasonableCandidates.length;
       diagnostics.automaticSearchNeededCount = automaticCandidatesNeeded;
 
-      if (
-        reasonableCandidates.length > 0 &&
-        automaticCandidatesNeeded > 0
-      ) {
+      if (automaticCandidatesNeeded > 0) {
         diagnostics.automaticSearchExecuted = true;
         diagnostics.automaticSearchReason =
           `実用的な候補が${reasonableCandidates.length}本のため、` +
@@ -3134,10 +3128,7 @@ followToggle.checked = true;
           diagnostics.automaticSearchReason += "（取得候補なし）";
         }
       } else {
-        diagnostics.automaticSearchReason =
-          reasonableCandidates.length >= 3
-            ? "候補が3本以上あるため追加検索不要"
-            : "基準にできる候補がないため追加検索不可";
+        diagnostics.automaticSearchReason = "自動追加検索は無効";
       }
 
       const preferredMode = selectedPreference;
