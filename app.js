@@ -85,15 +85,17 @@
   const routeEndpointsSummary = $("routeEndpointsSummary");
   const useCurrentLocationButton = $("useCurrentLocationButton");
   const addWaypointButton = $("addWaypointButton");
+  const topCurrentLocationButton = $("topCurrentLocationButton");
   const topDestinationButton = $("topDestinationButton");
+  const topAddWaypointButton = $("topAddWaypointButton");
   const topMapButton = $("topMapButton");
   const destinationMapButton = $("destinationMapButton");
   const waypointList = $("waypointList");
   const waypointCount = $("waypointCount");
   const routeButton = $("routeButton");
   const routeButtonIdleText =
-    routeButton?.textContent || "🧭 ルート候補を検索";
-  let shareRouteButton = null;
+    routeButton?.textContent || "🧭 3種類のルートを比較";
+  let shareRouteButton = $("shareRouteButton");
   const navigationButton = $("navigationButton");
   const routeSummaryPanel = $("routeSummaryPanel");
   const routeSummarySelection = $("routeSummarySelection");
@@ -113,10 +115,21 @@
   let headingUpEnabled = false;
   let headingButton = null;
   let lastKnownHeading = null;
-  let navigationInfoPanel = null;
-  let navigationDistanceValue = null;
-  let navigationEtaValue = null;
-  let navigationDurationValue = null;
+  let navigationInfoPanel = $("rideNaviInfoPanel");
+  let navigationDistanceValue = $("navigationDistanceValue");
+  let navigationEtaValue = $("navigationEtaValue");
+  let navigationDurationValue = $("navigationDurationValue");
+  const destinationPanel = $("destinationPanel");
+  const destinationName = $("destinationName");
+  const destinationAddress = $("destinationAddress");
+  const navigationGuidance = $("navigationGuidance");
+  const navigationDistanceInstruction = $("navigationDistanceInstruction");
+  const navigationInstruction = $("navigationInstruction");
+  const navigationNextInstruction = $("navigationNextInstruction");
+  const navigationDestination = $("navigationDestination");
+  const overviewButton = $("overviewButton");
+  const returnToLocationButton = $("returnToLocationButton");
+  const endNavigationButton = $("endNavigationButton");
 
   const OFF_ROUTE_DISTANCE_METERS = 80;
   const OFF_ROUTE_REQUIRED_COUNT = 2;
@@ -134,6 +147,7 @@
   let directionsService = null;
   let directionsRenderer = null;
   let trafficLayer = null;
+  let geocoder = null;
   let currentPosition = null;
   let userMarker = null;
   let destinationMarker = null;
@@ -150,6 +164,8 @@
   let selectedRouteMode = "local";
   let routePolylines = [];
   let routeNumberMarkers = [];
+  let longPressTimer = null;
+  let navigationOverviewActive = false;
   const routeSearchCache = new Map();
 
   function showStatus(message, autoHide = false) {
@@ -188,10 +204,100 @@
   function updateRouteEndpointsSummary() {
     if (!routeEndpointsSummary) return;
 
-    const origin = originInput?.value.trim() || "出発地未設定";
-    const destination = destinationInput?.value.trim() || "到着地未設定";
+    const origin = "現在地";
+    const destination = destinationInput?.value.trim() || "目的地未設定";
     routeEndpointsSummary.textContent = `${origin} → ${destination}`;
     routeEndpointsSummary.title = routeEndpointsSummary.textContent;
+  }
+
+  function routeModeInputs() {
+    return [...document.querySelectorAll(
+      'input[name="destinationRouteMode"], input[name="summaryRouteMode"]'
+    )];
+  }
+
+  function syncRouteModeControls(mode, searchAgain = false) {
+    const routeModeSelect = $("routeMode");
+    if (routeModeSelect) routeModeSelect.value = mode;
+    selectedRouteMode = mode;
+    routeModeInputs().forEach((input) => {
+      input.checked = input.value === mode;
+    });
+
+    if (searchAgain && lastRouteResult && !routeSearching) {
+      searchRoute();
+    }
+  }
+
+  function showDestinationPanel(name, address = "地図上の地点") {
+    if (!destinationPanel) return;
+    destinationName.textContent = name || "選択した目的地";
+    destinationAddress.textContent = address || "地図上の地点";
+    destinationPanel.hidden = false;
+    if (routeSummaryPanel) routeSummaryPanel.hidden = true;
+  }
+
+  function updateDestinationDetails(latLng) {
+    const lat = latLng.lat().toFixed(6);
+    const lng = latLng.lng().toFixed(6);
+    const coordinate = `${lat},${lng}`;
+    destinationInput.value = coordinate;
+    updateRouteEndpointsSummary();
+    updateRouteInfoEmpty();
+    showDestinationPanel("選択した目的地", coordinate);
+
+    if (!destinationMarker) {
+      destinationMarker = new google.maps.Marker({
+        map,
+        position: latLng,
+        title: "目的地",
+        animation: google.maps.Animation.DROP
+      });
+    } else {
+      destinationMarker.setPosition(latLng);
+    }
+
+    geocoder?.geocode({ location: latLng }, (results, status) => {
+      if (status !== "OK" || !results?.length) return;
+      const result = results[0];
+      const placeName = result.address_components?.[0]?.long_name;
+      destinationName.textContent = placeName || "選択した目的地";
+      destinationAddress.textContent = result.formatted_address || coordinate;
+      destinationMarker?.setTitle(placeName || "目的地");
+    });
+  }
+
+  function updateNavigationGuidance(point = getCurrentLatLng()) {
+    if (!navigationGuidance || !navigationSteps.length) return;
+    const step = navigationSteps[currentNavigationStepIndex];
+    if (!step) return;
+    const distance = point
+      ? distanceBetweenMeters(point, step.endLocation)
+      : step.distanceMeters;
+    navigationDistanceInstruction.textContent = navigationDistanceText(distance);
+    navigationInstruction.textContent = step.instruction;
+    navigationNextInstruction.textContent = navigationSteps[currentNavigationStepIndex + 1]
+      ? `次：${navigationSteps[currentNavigationStepIndex + 1].instruction}`
+      : "目的地まで案内します";
+  }
+
+  function showRouteOverview() {
+    const bounds = lastRouteResult?.routes?.[0]?.bounds;
+    if (!map || !bounds) return;
+    navigationOverviewActive = true;
+    if (followToggle) followToggle.checked = false;
+    document.body.classList.add("is-overview");
+    returnToLocationButton.hidden = false;
+    $("rideNaviHeadingControl")?.classList.add("is-overview-hidden");
+    map.fitBounds(bounds, 28);
+  }
+
+  function returnToCurrentLocation() {
+    navigationOverviewActive = false;
+    document.body.classList.remove("is-overview");
+    returnToLocationButton.hidden = true;
+    $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
+    centerOnCurrentLocation();
   }
 
   function cancelMapSelection(showMessage = false) {
@@ -879,6 +985,8 @@ function drawRouteOverlays() {
     routeSummaryMetrics.textContent =
       `${formatDuration(totals.totalDuration)}・` +
       formatDistance(totals.totalDistance);
+    syncRouteModeControls(mode);
+    if (destinationPanel) destinationPanel.hidden = true;
     routeSummaryPanel.hidden = false;
   }
 
@@ -1541,12 +1649,8 @@ function showRouteChoices(candidates, searchId) {
       if (input) input.placeholder = `経由地${index + 1}　例：道の駅`;
     });
 
-    if (waypointCount) {
-      waypointCount.textContent = `${rows.length} / ${MAX_WAYPOINTS}`;
-    }
-    if (addWaypointButton) {
-      addWaypointButton.disabled = rows.length >= MAX_WAYPOINTS;
-    }
+    waypointCount.textContent = `${rows.length} / ${MAX_WAYPOINTS}`;
+    addWaypointButton.disabled = rows.length >= MAX_WAYPOINTS;
   }
 
   function addWaypoint(value = "") {
@@ -1706,6 +1810,8 @@ function showRouteChoices(candidates, searchId) {
     }
 
     if (navigationActive) {
+      updateNavigationGuidance(point);
+      updateNavigationProgress(point);
       updateVoiceNavigation(point);
       checkAutomaticReroute(point, accuracy);
     }
@@ -1765,6 +1871,10 @@ function showRouteChoices(candidates, searchId) {
       return;
     }
 followToggle.checked = true;
+    navigationOverviewActive = false;
+    document.body.classList.remove("is-overview");
+    if (returnToLocationButton) returnToLocationButton.hidden = true;
+    $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
     map.panTo(point);
     map.setZoom(16);
   }
@@ -1878,6 +1988,8 @@ followToggle.checked = true;
             lng: step.end_location.lng()
           },
           distanceMeters: step.distance?.value || 0,
+          durationSeconds:
+            step.duration_in_traffic?.value || step.duration?.value || 0,
           legIndex
         });
       });
@@ -1939,6 +2051,7 @@ followToggle.checked = true;
         return;
       }
 
+      updateNavigationGuidance(point);
       showStatus(`次の案内：${nextStep.instruction}`, true);
       return;
     }
@@ -1955,6 +2068,32 @@ followToggle.checked = true;
       speakNavigation(`${navigationDistanceText(distance)}、${step.instruction}`);
       showStatus(`${navigationDistanceText(distance)}：${step.instruction}`, true);
     }
+  }
+
+  function updateNavigationProgress(point) {
+    if (!navigationActive || !point || !navigationSteps.length) return;
+    const currentStep = navigationSteps[currentNavigationStepIndex];
+    if (!currentStep) return;
+
+    const distanceToTurn = distanceBetweenMeters(point, currentStep.endLocation);
+    const currentRatio = Math.min(
+      1,
+      distanceToTurn / Math.max(currentStep.distanceMeters, 1)
+    );
+    let remainingDistance = Math.min(
+      distanceToTurn,
+      Math.max(currentStep.distanceMeters, distanceToTurn)
+    );
+    let remainingDuration = currentStep.durationSeconds * currentRatio;
+
+    navigationSteps.slice(currentNavigationStepIndex + 1).forEach((step) => {
+      remainingDistance += step.distanceMeters;
+      remainingDuration += step.durationSeconds;
+    });
+
+    navigationDistanceValue.textContent = formatDistance(remainingDistance);
+    navigationDurationValue.textContent = formatDuration(remainingDuration);
+    navigationEtaValue.textContent = formatEta(remainingDuration);
   }
 
   function updateRoutePath(result) {
@@ -2190,13 +2329,22 @@ followToggle.checked = true;
     rerouteInProgress = false;
     navigationActive = true;
     navigationButton.textContent = "■ ナビ終了";
+    document.body.classList.add("is-navigating");
+    document.body.classList.remove("is-overview");
+    if (navigationGuidance) navigationGuidance.hidden = false;
+    if (navigationDestination) {
+      navigationDestination.textContent =
+        destinationName?.textContent || destinationInput.value.trim() || "目的地";
+    }
     if (lastRouteResult?.routes?.[0]) {
       updateNavigationInfoPanel(lastRouteResult.routes[0]);
     }
     showNavigationInfoPanel();
     followToggle.checked = true;
     map.panTo(point);
+    map.setZoom(16);
     closePanel();
+    updateNavigationGuidance(point);
 
     const firstInstruction = navigationSteps[0]?.instruction;
     showStatus(
@@ -2215,6 +2363,11 @@ followToggle.checked = true;
     offRouteCount = 0;
     rerouteInProgress = false;
     navigationButton.textContent = "▶ ナビ開始";
+    document.body.classList.remove("is-navigating", "is-overview");
+    if (navigationGuidance) navigationGuidance.hidden = true;
+    hideNavigationInfoPanel();
+    if (returnToLocationButton) returnToLocationButton.hidden = true;
+    $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
 
     showStatus("ナビを終了しました", true);
     if (speak) speakNavigation("ナビを終了しました。");
@@ -2225,7 +2378,11 @@ followToggle.checked = true;
   }
 
   function createShareButton() {
-    if (!routeButton || shareRouteButton) return;
+    if (shareRouteButton) {
+      shareRouteButton.addEventListener("click", shareRouteUrl);
+      return;
+    }
+    if (!routeButton) return;
 
     shareRouteButton = document.createElement("button");
     shareRouteButton.id = "shareRouteButton";
@@ -2433,6 +2590,15 @@ followToggle.checked = true;
       return;
     }
 
+    if (
+      destinationName &&
+      (!destinationName.textContent ||
+        destinationName.textContent === "選択した目的地")
+    ) {
+      destinationName.textContent = destinationText;
+      if (destinationAddress) destinationAddress.textContent = destinationText;
+    }
+
     let origin = originText;
 
     if (originText === "現在地") {
@@ -2490,7 +2656,7 @@ followToggle.checked = true;
     routeButton.disabled = true;
     routeButton.textContent = "ルートを検索中…";
     resetRouteSearchState(selectedPreference);
-    showStatus("無料ルート・一部有料・高速優先を比較しています…");
+    showStatus(`${routeModeShortLabel(selectedPreference)}を検索しています…`);
 
     try {
       const cachedCandidates = cachedRouteCandidates(cacheKey);
@@ -2864,272 +3030,11 @@ followToggle.checked = true;
         uniqueCandidates,
         initialShortestDistance
       );
-      const automaticCandidatesNeeded = 0;
-
       diagnostics.automaticSearchInitialCandidateCount =
         reasonableCandidates.length;
-      diagnostics.automaticSearchNeededCount = automaticCandidatesNeeded;
-
-      if (automaticCandidatesNeeded > 0) {
-        diagnostics.automaticSearchExecuted = true;
-        diagnostics.automaticSearchReason =
-          `実用的な候補が${reasonableCandidates.length}本のため、` +
-          `${automaticCandidatesNeeded}本を追加検索`;
-        const baseCandidate = reasonableCandidates.reduce(
-          (shortestCandidate, candidate) => {
-            const shortestDistance = sumRouteTotals(
-              shortestCandidate.result.routes[shortestCandidate.routeIndex]
-            ).totalDistance;
-            const candidateDistance = sumRouteTotals(
-              candidate.result.routes[candidate.routeIndex]
-            ).totalDistance;
-
-            return candidateDistance < shortestDistance
-              ? candidate
-              : shortestCandidate;
-          }
-        );
-        const baseRoute =
-          baseCandidate.result.routes[baseCandidate.routeIndex];
-        const baseDistance = sumRouteTotals(baseRoute).totalDistance;
-        const viaPoints = createAdditionalViaPoints(
-          baseRoute,
-          baseDistance,
-          selectedPreference
-        );
-
-        diagnostics.generatedViaRequestCount = viaPoints.length;
-        diagnostics.apiRequestCount += viaPoints.length;
-
-        const generatedResponses = await Promise.all(
-          viaPoints.map(async (viaPoint) => {
-            const insertionIndex = Math.min(
-              waypoints.length,
-              nearestRouteLegIndex(baseRoute, viaPoint.location)
-            );
-            const generatedWaypoints = [...waypoints];
-
-            generatedWaypoints.splice(insertionIndex, 0, {
-              location: viaPoint.location,
-              stopover: false
-            });
-            diagnostics.generatedViaPoints.push({
-              種別: viaPoint.label || "自動生成点",
-              "基準位置％": viaPoint.kind === "biwako-bridge"
-                ? "固定"
-                : Math.round(viaPoint.fraction * 100),
-              左右: viaPoint.side === "fixed"
-                ? "固定"
-                : viaPoint.side === "left" ? "左" : "右",
-              オフセットkm: Number(
-                (viaPoint.offsetMeters / 1000).toFixed(1)
-              ),
-              緯度: Number(viaPoint.location.lat.toFixed(6)),
-              経度: Number(viaPoint.location.lng.toFixed(6)),
-              挿入位置: insertionIndex + 1,
-              stopover: false
-            });
-
-            return {
-              viaPoint,
-              response: await directionsPromise(
-                routeRequest(
-                  origin,
-                  destinationText,
-                  generatedWaypoints,
-                  selectedPreference
-                )
-              )
-            };
-          })
-        );
-
-        if (searchId !== latestRouteSearchId) return;
-
-        const generatedCandidates = [];
-
-        generatedResponses.forEach(({ viaPoint, response }) => {
-          const { result, status } = response;
-          if (status !== "OK" || !result?.routes?.length) {
-            diagnostics.apiErrorCount += 1;
-            return;
-          }
-
-          diagnostics.apiRouteCount += result.routes.length;
-          result.routes.forEach((route, routeIndex) => {
-            const candidate = {
-              mode: selectedPreference,
-              result,
-              routeIndex,
-              isAutomatic: true,
-              isBiwakoBridge: viaPoint.kind === "biwako-bridge"
-            };
-            const viaPointDescription = viaPoint.kind === "biwako-bridge"
-              ? viaPoint.label
-              : `${Math.round(viaPoint.fraction * 100)}%・` +
-                `${viaPoint.side === "left" ? "左" : "右"}・` +
-                `${Math.round(viaPoint.offsetMeters / 1000)}km`;
-            const automaticPracticality =
-              evaluateRoutePracticality(route, baseRoute);
-            const modeAssessment = routeModeAssessment(
-              route,
-              selectedPreference,
-              freeRouteDuration,
-              { allowNotFaster: viaPoint.kind === "biwako-bridge" }
-            );
-
-            if (!modeAssessment.accepted) {
-              automaticPracticality.accepted = false;
-              automaticPracticality.rejectionReasons.push(
-                ...modeAssessment.rejectionReasons.map(
-                  (reason) => `${routeModeLabel(selectedPreference)}：${reason}`
-                )
-              );
-            }
-
-            if (
-              evaluateCandidate(
-                candidate,
-                "自動通過点",
-                viaPointDescription,
-                automaticPracticality
-              )
-            ) {
-              generatedCandidates.push(candidate);
-            }
-          });
-        });
-
-        if (generatedCandidates.length) {
-          const combinedCandidates = [
-            ...reasonableCandidates,
-            ...generatedCandidates
-          ];
-          const combinedShortestDistance = Math.min(
-            ...combinedCandidates.map((candidate) =>
-              sumRouteTotals(
-                candidate.result.routes[candidate.routeIndex]
-              ).totalDistance
-            )
-          );
-          const practicalCandidates = filterCandidatesByDistance(
-            combinedCandidates,
-            combinedShortestDistance
-          );
-          const existingCandidateSet = new Set(reasonableCandidates);
-          const practicalExistingCandidates = practicalCandidates.filter(
-            (candidate) => existingCandidateSet.has(candidate)
-          );
-          const practicalGeneratedCandidates = practicalCandidates.filter(
-            (candidate) => !existingCandidateSet.has(candidate)
-          );
-
-          practicalGeneratedCandidates.forEach((candidate) => {
-            const route =
-              candidate.result.routes[candidate.routeIndex];
-            const maximumOverlap = practicalExistingCandidates.length
-              ? Math.max(
-                  ...practicalExistingCandidates.map((existingCandidate) => {
-                    const existingRoute =
-                      existingCandidate.result.routes[
-                        existingCandidate.routeIndex
-                      ];
-                    return compareRouteShapes(
-                      route,
-                      existingRoute
-                    ).overlapRatio;
-                  })
-                )
-              : 1;
-            const record = candidateRecords.get(candidate);
-
-            candidate.shapeDifference = 1 - maximumOverlap;
-            if (record) {
-              record.形状差 = Number(
-                (candidate.shapeDifference * 100).toFixed(1)
-              );
-              record.最大形状重複率 = Number(
-                (maximumOverlap * 100).toFixed(1)
-              );
-              record.判定 = "自動候補合格";
-            }
-          });
-
-          practicalGeneratedCandidates.sort((first, second) => {
-            const fixedBridgeDifference =
-              Number(!first.isBiwakoBridge) -
-              Number(!second.isBiwakoBridge);
-
-            if (fixedBridgeDifference !== 0) return fixedBridgeDifference;
-
-            const shapeDifference =
-              (second.shapeDifference || 0) -
-              (first.shapeDifference || 0);
-            if (Math.abs(shapeDifference) > 0.001) {
-              return shapeDifference;
-            }
-
-            const firstTotals = sumRouteTotals(
-              first.result.routes[first.routeIndex]
-            );
-            const secondTotals = sumRouteTotals(
-              second.result.routes[second.routeIndex]
-            );
-            const distanceDifference =
-              firstTotals.totalDistance - secondTotals.totalDistance;
-
-            if (distanceDifference !== 0) return distanceDifference;
-            const durationDifference =
-              firstTotals.totalDuration - secondTotals.totalDuration;
-
-            if (durationDifference !== 0) return durationDifference;
-            return compareRoutesDeterministically(
-              first.result.routes[first.routeIndex],
-              second.result.routes[second.routeIndex]
-            );
-          });
-
-          const additionalCandidateCount = Math.max(
-            0,
-            3 - practicalExistingCandidates.length
-          );
-          const selectedGeneratedCandidates =
-            practicalGeneratedCandidates.slice(0, additionalCandidateCount);
-
-          if (selectedGeneratedCandidates.length) {
-            practicalGeneratedCandidates
-              .slice(selectedGeneratedCandidates.length)
-              .forEach((candidate) => {
-                const record = candidateRecords.get(candidate);
-                if (record) record.判定 = "自動候補不採用";
-              });
-
-            reasonableCandidates = [
-              ...practicalExistingCandidates,
-              ...selectedGeneratedCandidates
-            ];
-            selectedGeneratedCandidates.forEach((candidate, index) => {
-              const selectedRecord = candidateRecords.get(candidate);
-              if (selectedRecord) {
-                selectedRecord.判定 =
-                  `${practicalExistingCandidates.length + index + 1}本目に採用`;
-              }
-            });
-            diagnostics.automaticSearchReason +=
-              `（${selectedGeneratedCandidates.length}本採用）`;
-          } else {
-            practicalGeneratedCandidates.forEach((candidate) => {
-              const record = candidateRecords.get(candidate);
-              if (record) record.判定 = "自動候補不採用";
-            });
-            diagnostics.automaticSearchReason += "（合格候補なし）";
-          }
-        } else {
-          diagnostics.automaticSearchReason += "（取得候補なし）";
-        }
-      } else {
-        diagnostics.automaticSearchReason = "自動追加検索は無効";
-      }
+      diagnostics.automaticSearchNeededCount = 0;
+      diagnostics.automaticSearchReason =
+        "自動通過点による追加検索は停止中";
 
       const preferredMode = selectedPreference;
       const baseOrder = ["highway", "partial", "local"];
@@ -3438,15 +3343,30 @@ followToggle.checked = true;
       });
 
     map.addListener("dragstart", () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
       if (!followToggle) return;
 
       followToggle.checked = false;
       showStatus("地図の自動追従を解除しました", true);
     });
+    map.addListener("dragend", () => {
+      if (!navigationActive || navigationOverviewActive || !returnToLocationButton) {
+        return;
+      }
+      const point = getCurrentLatLng();
+      const bounds = map.getBounds();
+      returnToLocationButton.hidden = Boolean(
+        point && bounds?.contains(new google.maps.LatLng(point))
+      );
+    });
 
   
 
       directionsService = new google.maps.DirectionsService();
+      geocoder = new google.maps.Geocoder();
 
       directionsRenderer = new google.maps.DirectionsRenderer({
         map,
@@ -3461,34 +3381,44 @@ followToggle.checked = true;
 
       map.addListener("click", (event) => {
         if (!event.latLng || !mapSelectionTarget) return;
-
-        const lat = event.latLng.lat().toFixed(6);
-        const lng = event.latLng.lng().toFixed(6);
         const { input, label, isDestination } = mapSelectionTarget;
-
-        if (isDestination && !destinationMarker) {
-          destinationMarker = new google.maps.Marker({
-            map,
-            position: event.latLng,
-            title: "目的地",
-            animation: google.maps.Animation.DROP
-          });
-        } else if (isDestination) {
-          destinationMarker.setPosition(event.latLng);
+        if (isDestination) {
+          updateDestinationDetails(event.latLng);
+        } else {
+          input.value = `${event.latLng.lat().toFixed(6)},${event.latLng.lng().toFixed(6)}`;
         }
-
-        input.value = `${lat},${lng}`;
         updateRouteEndpointsSummary();
         updateRouteInfoEmpty();
         cancelMapSelection();
         showStatus(`📍 ${label}を設定しました`, true);
       });
 
+      const cancelLongPress = () => {
+        if (longPressTimer) clearTimeout(longPressTimer);
+        longPressTimer = null;
+      };
+      map.addListener("mousedown", (event) => {
+        cancelLongPress();
+        if (!event.latLng || navigationActive) return;
+        longPressTimer = setTimeout(() => {
+          updateDestinationDetails(event.latLng);
+          showStatus("目的地を設定しました", true);
+          longPressTimer = null;
+        }, 650);
+      });
+      map.addListener("mouseup", cancelLongPress);
+      map.addListener("drag", cancelLongPress);
+      map.addListener("rightclick", (event) => {
+        if (!event.latLng || navigationActive) return;
+        updateDestinationDetails(event.latLng);
+        showStatus("目的地を設定しました", true);
+      });
+
       trafficLayer = new google.maps.TrafficLayer();
       createNavigationInfoPanel();
       createHeadingButton();
 
-      showStatus("Ride Navi 2.3.1 β を読み込みました", true);
+      showStatus("目的地を検索するか、地図を長押ししてください", true);
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
@@ -3534,6 +3464,7 @@ followToggle.checked = true;
   closePanelButton?.addEventListener("click", closePanel);
   useCurrentLocationButton?.addEventListener("click", useCurrentLocationAsOrigin);
   addWaypointButton?.addEventListener("click", () => addWaypoint());
+  topCurrentLocationButton?.addEventListener("click", useCurrentLocationAsOrigin);
   topDestinationButton?.addEventListener("click", () => {
     openPanel();
     destinationInput?.focus();
@@ -3562,6 +3493,18 @@ followToggle.checked = true;
   });
 
   destinationInput?.addEventListener("input", updateRouteEndpointsSummary);
+
+  routeModeInputs().forEach((input) => {
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      const shouldSearchAgain =
+        input.name === "summaryRouteMode" && Boolean(lastRouteResult);
+      syncRouteModeControls(input.value, shouldSearchAgain);
+    });
+  });
+  overviewButton?.addEventListener("click", showRouteOverview);
+  returnToLocationButton?.addEventListener("click", returnToCurrentLocation);
+  endNavigationButton?.addEventListener("click", () => stopNavigation());
 
   createNavigationButton();
   createShareButton();

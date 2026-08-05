@@ -4,110 +4,106 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#1a73e8">
-  <title>Ride Navi 2.3.1 β</title>
-
+  <title>Ride Navi 2.4 β</title>
   <link rel="manifest" href="manifest.json">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-  
-  <link rel="stylesheet" href="style.css?v=2.3.9">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="stylesheet" href="style.css?v=2.4.0">
 </head>
 <body>
   <main id="app">
     <div id="map"></div>
 
-    <header class="top-bar">
-      <div class="top-bar-heading">
-        <strong>🏍 Ride Navi</strong>
-        <button id="menuButton" type="button" aria-label="メニュー">☰</button>
-      </div>
-      <div class="top-route-controls" aria-label="ルート地点の操作">
-        <span class="top-route-fixed">現在地</span>
-        <button id="topDestinationButton" type="button">目的地</button>
-        <button id="topAddWaypointButton" type="button" aria-label="経由地機能は準備中" disabled>＋</button>
-        <button id="topMapButton" type="button">MAP</button>
-      </div>
-      <span id="routeEndpointsSummary">現在地 → 到着地未設定</span>
+    <header id="searchBar" class="search-bar">
+      <span class="search-icon" aria-hidden="true">⌕</span>
+      <input id="destinationInput" type="search" placeholder="目的地を検索" autocomplete="off" aria-label="目的地を検索">
+      <button id="topMapButton" type="button" aria-label="地図から目的地を選ぶ">MAP</button>
     </header>
 
-    <section id="controlPanel" class="control-panel is-hidden">
-      <div class="panel-title">
-        <strong>ルートを作る</strong>
-        <button id="closePanelButton" type="button" aria-label="閉じる">✕</button>
+    <section id="destinationPanel" class="bottom-sheet destination-sheet" hidden aria-label="目的地とルート条件">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <strong id="destinationName">選択した目的地</strong>
+      <span id="destinationAddress">地図上の地点</span>
+      <fieldset class="road-mode-group">
+        <legend>道路タイプ</legend>
+        <label><input type="radio" name="destinationRouteMode" value="highway"><span>高速優先</span></label>
+        <label><input type="radio" name="destinationRouteMode" value="partial"><span>一部有料</span></label>
+        <label><input type="radio" name="destinationRouteMode" value="local" checked><span>一般道</span></label>
+      </fieldset>
+      <button id="routeButton" class="primary-action" type="button">ルート検索</button>
+    </section>
+
+    <section id="routeSummaryPanel" class="bottom-sheet route-summary-panel" hidden aria-label="選択中のルート情報">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="route-summary-title">
+        <strong id="routeSummaryRoadType">一般道</strong>
+        <span id="routeSummarySelection">選択中 ①</span>
+        <span id="routeSummaryToll" hidden></span>
       </div>
+      <fieldset class="road-mode-group compact">
+        <legend>道路タイプを変更</legend>
+        <label><input type="radio" name="summaryRouteMode" value="highway"><span>高速優先</span></label>
+        <label><input type="radio" name="summaryRouteMode" value="partial"><span>一部有料</span></label>
+        <label><input type="radio" name="summaryRouteMode" value="local" checked><span>一般道</span></label>
+      </fieldset>
+      <strong id="routeSummaryMetrics">時間・距離</strong>
+      <div class="summary-actions">
+        <button id="shareRouteButton" type="button">共有</button>
+        <button id="navigationButton" class="primary-action" type="button" disabled>ナビ開始</button>
+      </div>
+    </section>
 
-      <input id="originInput" type="hidden" value="現在地">
-      <div id="waypointList" hidden></div>
+    <section id="navigationGuidance" class="navigation-guidance" hidden aria-live="polite">
+      <span id="navigationDistanceInstruction">案内を準備しています</span>
+      <strong id="navigationInstruction">そのままお進みください</strong>
+      <small id="navigationNextInstruction"></small>
+    </section>
 
-      <label class="field">
+    <section id="rideNaviInfoPanel" class="navigation-bottom" aria-label="ナビ情報">
+      <div class="navigation-destination">
         <span>目的地</span>
-        <div class="location-input-row">
-          <input id="destinationInput" type="text" placeholder="例：道の駅 美山ふれあい広場">
-          <button id="destinationMapButton" class="map-select-button" type="button">MAP</button>
-        </div>
-      </label>
-<label class="field">
-        <span>最初に表示する候補</span>
-        <select id="routeMode">
-          <option value="local">🌿 無料ルート</option>
-          <option value="partial">🛣️ 一部有料</option>
-          <option value="highway">🚀 高速優先</option>
-        </select>
-      </label>
-      <button id="routeButton" class="primary" type="button">
-        🧭 ルート候補を検索
-      </button>
-
-      <div class="button-grid">
-        <button id="locationButton" type="button">現在地へ</button>
-        <button id="clearRouteButton" type="button">ルート消去</button>
+        <strong id="navigationDestination">目的地</strong>
       </div>
-
-      <label class="toggle-row">
-        <input id="followToggle" type="checkbox" checked>
-        <span>現在地を自動追従</span>
-      </label>
-
-      <label class="toggle-row">
-        <input id="trafficToggle" type="checkbox">
-        <span>渋滞情報を表示</span>
-      </label>
-
-      <button id="voiceTestButton" class="secondary" type="button">🔊 音声テスト</button>
-
-      <div id="routeInfo" class="info-box">
-        距離：未設定<br>
-        時間：未設定<br>
-        経由地：0か所
+      <div class="navigation-metrics">
+        <div><span>残り時間</span><strong id="navigationDurationValue">―</strong></div>
+        <div><span>残り距離</span><strong id="navigationDistanceValue">―</strong></div>
+        <div><span>到着予定</span><strong id="navigationEtaValue">―</strong></div>
       </div>
-
-      <div id="gpsInfo" class="info-box muted-box">
-        GPS：未取得<br>
-        精度：未取得
+      <div class="navigation-bottom-actions">
+        <button id="overviewButton" type="button">ルート全体</button>
+        <button id="endNavigationButton" type="button">ナビ終了</button>
       </div>
-
-      <p class="note">
-        Googleが返したルート候補をそのまま表示します。道路標識・交通規制を優先してください。
-      </p>
     </section>
 
+    <button id="returnToLocationButton" class="return-location" type="button" hidden>現在地に戻る</button>
     <div id="status" class="status">地図を読み込んでいます…</div>
-    <section id="routeSummaryPanel" class="route-summary-panel" aria-label="選択中のルート情報" hidden>
-      <div class="route-summary-details">
-        <div class="route-summary-title">
-          <span id="routeSummarySelection">選択中 ①</span>
-          <strong id="routeSummaryRoadType">道路種類</strong>
-          <span id="routeSummaryToll" hidden></span>
-        </div>
-        <span id="routeSummaryMetrics">時間・距離</span>
-      </div>
-      <button id="navigationButton" type="button" disabled>▶ ナビ開始</button>
-    </section>
     <button id="floatingLocationButton" class="floating-location" type="button" aria-label="現在地へ">◎</button>
-  </main>
 
+    <!-- 既存の検索・GPS処理が使う非表示要素 -->
+    <div class="legacy-controls" aria-hidden="true">
+      <section id="controlPanel" class="control-panel is-hidden"></section>
+      <button id="menuButton" type="button"></button>
+      <button id="closePanelButton" type="button"></button>
+      <input id="originInput" type="text" value="現在地" readonly>
+      <span id="routeEndpointsSummary"></span>
+      <button id="useCurrentLocationButton" type="button"></button>
+      <button id="addWaypointButton" type="button"></button>
+      <button id="topCurrentLocationButton" type="button"></button>
+      <button id="topDestinationButton" type="button"></button>
+      <button id="topAddWaypointButton" type="button"></button>
+      <button id="destinationMapButton" type="button"></button>
+      <div id="waypointList"></div><span id="waypointCount"></span>
+      <select id="routeMode"><option value="local">一般道</option><option value="partial">一部有料</option><option value="highway">高速優先</option></select>
+      <button id="clearRouteButton" type="button"></button>
+      <button id="locationButton" type="button"></button>
+      <input id="followToggle" type="checkbox" checked>
+      <input id="trafficToggle" type="checkbox">
+      <button id="voiceTestButton" type="button"></button>
+      <div id="routeInfo"></div><div id="gpsInfo"></div>
+    </div>
+  </main>
   <script src="config.js"></script>
   <script src="src/map.js"></script>
-<script src="app.js?v=2.3.14"></script>
+  <script src="app.js?v=2.4.0"></script>
 </body>
 </html>
