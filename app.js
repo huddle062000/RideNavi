@@ -115,6 +115,9 @@
   let headingUpEnabled = false;
   let headingButton = null;
   let lastKnownHeading = null;
+  let previousGpsPoint = null;
+  let bikeMarkerImage = null;
+  const bikeMarkerIconCache = new Map();
   let navigationInfoPanel = $("rideNaviInfoPanel");
   let navigationDistanceValue = $("navigationDistanceValue");
   let navigationEtaValue = $("navigationEtaValue");
@@ -124,6 +127,7 @@
   const destinationAddress = $("destinationAddress");
   const navigationGuidance = $("navigationGuidance");
   const navigationDistanceInstruction = $("navigationDistanceInstruction");
+  const navigationIntersectionName = $("navigationIntersectionName");
   const navigationInstruction = $("navigationInstruction");
   const navigationNextInstruction = $("navigationNextInstruction");
   const navigationDestination = $("navigationDestination");
@@ -275,6 +279,12 @@
       ? distanceBetweenMeters(point, step.endLocation)
       : step.distanceMeters;
     navigationDistanceInstruction.textContent = navigationDistanceText(distance);
+    if (navigationIntersectionName) {
+      navigationIntersectionName.textContent = step.intersectionName
+        ? `交差点：${step.intersectionName}`
+        : "";
+      navigationIntersectionName.hidden = !step.intersectionName;
+    }
     navigationInstruction.textContent = step.instruction;
     navigationNextInstruction.textContent = navigationSteps[currentNavigationStepIndex + 1]
       ? `次：${navigationSteps[currentNavigationStepIndex + 1].instruction}`
@@ -1727,7 +1737,11 @@ function showRouteChoices(candidates, searchId) {
   }
 
   function clearDisplayedRoute(showMessage = true) {
-    if (navigationActive) stopNavigation();
+    if (navigationActive) {
+      stopNavigation(true);
+      if (showMessage) showStatus("ルートを消去しました", true);
+      return;
+    }
     lastRouteResult = null;
     navigationSteps = [];
     currentNavigationStepIndex = 0;
@@ -1764,6 +1778,53 @@ function showRouteChoices(candidates, searchId) {
     };
   }
 
+  function bearingBetweenPoints(from, to) {
+    const toRadians = (degrees) => degrees * Math.PI / 180;
+    const toDegrees = (radians) => radians * 180 / Math.PI;
+    const fromLat = toRadians(from.lat);
+    const toLat = toRadians(to.lat);
+    const deltaLng = toRadians(to.lng - from.lng);
+    const y = Math.sin(deltaLng) * Math.cos(toLat);
+    const x =
+      Math.cos(fromLat) * Math.sin(toLat) -
+      Math.sin(fromLat) * Math.cos(toLat) * Math.cos(deltaLng);
+    return (toDegrees(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  function createBikeMarkerIcon(heading = 0) {
+    if (!bikeMarkerImage?.complete || !bikeMarkerImage.naturalWidth) return null;
+
+    const roundedHeading = Math.round(heading / 5) * 5 % 360;
+    if (bikeMarkerIconCache.has(roundedHeading)) {
+      return bikeMarkerIconCache.get(roundedHeading);
+    }
+
+    const size = 88;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    context.translate(size / 2, size / 2);
+    context.rotate(roundedHeading * Math.PI / 180);
+    context.drawImage(bikeMarkerImage, -size / 2, -size / 2, size, size);
+
+    const icon = {
+      url: canvas.toDataURL("image/png"),
+      scaledSize: new google.maps.Size(size, size),
+      anchor: new google.maps.Point(size / 2, size / 2)
+    };
+    bikeMarkerIconCache.set(roundedHeading, icon);
+    return icon;
+  }
+
+  function updateBikeMarkerHeading() {
+    if (!userMarker) return;
+    const icon = createBikeMarkerIcon(
+      headingUpEnabled ? 0 : (lastKnownHeading || 0)
+    );
+    if (icon) userMarker.setIcon(icon);
+  }
+
   function updateGps(position) {
     currentPosition = position;
 
@@ -1775,14 +1836,21 @@ function showRouteChoices(candidates, searchId) {
       position.coords.heading >= 0
     ) {
       lastKnownHeading = position.coords.heading;
+    } else if (
+      previousGpsPoint &&
+      distanceBetweenMeters(previousGpsPoint, point) >= 3
+    ) {
+      lastKnownHeading = bearingBetweenPoints(previousGpsPoint, point);
     }
+    previousGpsPoint = point;
 
     if (!userMarker) {
       userMarker = new google.maps.Marker({
         map,
         position: point,
         title: "現在地",
-        zIndex: 1000
+        zIndex: 1000,
+        optimized: false
       });
 
       accuracyCircle = new google.maps.Circle({
@@ -1804,6 +1872,8 @@ function showRouteChoices(candidates, searchId) {
     if (followToggle.checked) {
       map.panTo(point);
     }
+
+    updateBikeMarkerHeading();
 
     if (headingUpEnabled && Number.isFinite(lastKnownHeading)) {
       map.setHeading(lastKnownHeading);
@@ -1970,6 +2040,16 @@ followToggle.checked = true;
       .trim();
   }
 
+  function extractIntersectionName(instruction) {
+    const match = instruction.match(
+      /(?:^|[、。\s])([^、。]{1,24}?(?:交差点|ジャンクション|JCT|ＪＣＴ))(?=[をでへに、。\s]|$)/i
+    );
+    if (!match) return "";
+    return match[1]
+      .replace(/^(?:次の|この|その|信号のある)\s*/, "")
+      .trim();
+  }
+
   function buildNavigationSteps(result) {
     const steps = [];
 
@@ -1983,6 +2063,7 @@ followToggle.checked = true;
 
         steps.push({
           instruction,
+          intersectionName: extractIntersectionName(instruction),
           endLocation: {
             lat: step.end_location.lat(),
             lng: step.end_location.lng()
@@ -2328,6 +2409,7 @@ followToggle.checked = true;
     offRouteCount = 0;
     rerouteInProgress = false;
     navigationActive = true;
+    headingUpEnabled = true;
     navigationButton.textContent = "■ ナビ終了";
     document.body.classList.add("is-navigating");
     document.body.classList.remove("is-overview");
@@ -2341,8 +2423,19 @@ followToggle.checked = true;
     }
     showNavigationInfoPanel();
     followToggle.checked = true;
+    userMarker?.setVisible(true);
     map.panTo(point);
-    map.setZoom(16);
+    map.setZoom(18);
+    if (Number.isFinite(lastKnownHeading)) {
+      map.setHeading(lastKnownHeading);
+    }
+    if (headingButton) {
+      headingButton.classList.add("active");
+      headingButton.setAttribute("aria-pressed", "true");
+      headingButton.title = "北を上に固定";
+      headingButton.setAttribute("aria-label", "北を上に固定");
+    }
+    updateBikeMarkerHeading();
     closePanel();
     updateNavigationGuidance(point);
 
@@ -2368,6 +2461,8 @@ followToggle.checked = true;
     hideNavigationInfoPanel();
     if (returnToLocationButton) returnToLocationButton.hidden = true;
     $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
+
+    clearDisplayedRoute(false);
 
     showStatus("ナビを終了しました", true);
     if (speak) speakNavigation("ナビを終了しました。");
@@ -3319,6 +3414,7 @@ followToggle.checked = true;
         map.setHeading(0);
         showStatus("北を上に固定しました", true);
       }
+      updateBikeMarkerHeading();
     });
 
     controls.append(headingButton);
@@ -3415,6 +3511,9 @@ followToggle.checked = true;
       });
 
       trafficLayer = new google.maps.TrafficLayer();
+      bikeMarkerImage = new Image();
+      bikeMarkerImage.onload = updateBikeMarkerHeading;
+      bikeMarkerImage.src = "icons/ridenavi-bike-marker-v2.png";
       createNavigationInfoPanel();
       createHeadingButton();
 
