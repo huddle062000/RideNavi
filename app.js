@@ -88,7 +88,6 @@
   const topCurrentLocationButton = $("topCurrentLocationButton");
   const topDestinationButton = $("topDestinationButton");
   const topAddWaypointButton = $("topAddWaypointButton");
-  const topMapButton = $("topMapButton");
   const destinationMapButton = $("destinationMapButton");
   const waypointList = $("waypointList");
   const waypointCount = $("waypointCount");
@@ -125,6 +124,8 @@
   const destinationPanel = $("destinationPanel");
   const destinationName = $("destinationName");
   const destinationAddress = $("destinationAddress");
+  const clearDestinationButton = $("clearDestinationButton");
+  const clearRouteDestinationButton = $("clearRouteDestinationButton");
   const navigationGuidance = $("navigationGuidance");
   const navigationDistanceInstruction = $("navigationDistanceInstruction");
   const navigationIntersectionName = $("navigationIntersectionName");
@@ -155,6 +156,7 @@
   let currentPosition = null;
   let userMarker = null;
   let destinationMarker = null;
+  let destinationSelectionId = 0;
   let mapSelectionTarget = null;
   let accuracyCircle = null;
   let statusTimer = null;
@@ -241,10 +243,23 @@
     if (routeSummaryPanel) routeSummaryPanel.hidden = true;
   }
 
+  function cancelPendingRouteSearch() {
+    latestRouteSearchId += 1;
+    routeSearching = false;
+    activeRouteSearchKey = "";
+    if (routeButton) {
+      routeButton.disabled = false;
+      routeButton.textContent = routeButtonIdleText;
+    }
+  }
+
   function updateDestinationDetails(latLng) {
+    const selectionId = ++destinationSelectionId;
     const lat = latLng.lat().toFixed(6);
     const lng = latLng.lng().toFixed(6);
     const coordinate = `${lat},${lng}`;
+    cancelPendingRouteSearch();
+    clearDisplayedRoute(false);
     destinationInput.value = coordinate;
     updateRouteEndpointsSummary();
     updateRouteInfoEmpty();
@@ -262,13 +277,40 @@
     }
 
     geocoder?.geocode({ location: latLng }, (results, status) => {
-      if (status !== "OK" || !results?.length) return;
+      if (
+        selectionId !== destinationSelectionId ||
+        status !== "OK" ||
+        !results?.length
+      ) {
+        return;
+      }
       const result = results[0];
-      const placeName = result.address_components?.[0]?.long_name;
-      destinationName.textContent = placeName || "選択した目的地";
-      destinationAddress.textContent = result.formatted_address || coordinate;
-      destinationMarker?.setTitle(placeName || "目的地");
+      const namedResult = results.find((candidate) =>
+        candidate.types?.some((type) =>
+          ["establishment", "point_of_interest", "premise", "natural_feature"].includes(type)
+        )
+      );
+      const placeName = namedResult?.address_components?.[0]?.long_name || "";
+      const address = result.formatted_address || coordinate;
+      destinationName.textContent = placeName || address;
+      destinationAddress.textContent = placeName ? address : coordinate;
+      destinationMarker?.setTitle(placeName || address || "目的地");
     });
+  }
+
+  function clearDestination() {
+    destinationSelectionId += 1;
+    cancelPendingRouteSearch();
+    cancelMapSelection();
+    clearDisplayedRoute(false);
+    destinationMarker?.setMap(null);
+    destinationMarker = null;
+    destinationInput.value = "";
+    destinationName.textContent = "選択した目的地";
+    destinationAddress.textContent = "地図上の地点";
+    destinationPanel.hidden = true;
+    updateRouteEndpointsSummary();
+    showStatus("目的地を解除しました", true);
   }
 
   function updateNavigationGuidance(point = getCurrentLatLng()) {
@@ -313,7 +355,6 @@
   function cancelMapSelection(showMessage = false) {
     mapSelectionTarget = null;
     map?.getDiv().classList.remove("map-selection-active");
-    topMapButton?.setAttribute("aria-pressed", "false");
     destinationMapButton?.setAttribute("aria-pressed", "false");
     waypointList
       ?.querySelectorAll(".map-select-button")
@@ -342,7 +383,6 @@
     map.getDiv().classList.add("map-selection-active");
     button?.setAttribute("aria-pressed", "true");
     if (input === destinationInput) {
-      topMapButton?.setAttribute("aria-pressed", "true");
       destinationMapButton?.setAttribute("aria-pressed", "true");
     }
     showStatus(`地図上で${label}をタップしてください`);
@@ -3476,13 +3516,17 @@ followToggle.checked = true;
       });
 
       map.addListener("click", (event) => {
-        if (!event.latLng || !mapSelectionTarget) return;
-        const { input, label, isDestination } = mapSelectionTarget;
-        if (isDestination) {
-          updateDestinationDetails(event.latLng);
-        } else {
-          input.value = `${event.latLng.lat().toFixed(6)},${event.latLng.lng().toFixed(6)}`;
+        if (
+          !event.latLng ||
+          !mapSelectionTarget ||
+          mapSelectionTarget.isDestination ||
+          navigationActive
+        ) {
+          return;
         }
+
+        const { input, label } = mapSelectionTarget;
+        input.value = `${event.latLng.lat().toFixed(6)},${event.latLng.lng().toFixed(6)}`;
         updateRouteEndpointsSummary();
         updateRouteInfoEmpty();
         cancelMapSelection();
@@ -3504,6 +3548,7 @@ followToggle.checked = true;
       });
       map.addListener("mouseup", cancelLongPress);
       map.addListener("drag", cancelLongPress);
+      map.addListener("zoom_changed", cancelLongPress);
       map.addListener("rightclick", (event) => {
         if (!event.latLng || navigationActive) return;
         updateDestinationDetails(event.latLng);
@@ -3568,12 +3613,11 @@ followToggle.checked = true;
     openPanel();
     destinationInput?.focus();
   });
-  topMapButton?.addEventListener("click", () => {
-    startMapSelection(destinationInput, "目的地", topMapButton);
-  });
   destinationMapButton?.addEventListener("click", () => {
     startMapSelection(destinationInput, "目的地", destinationMapButton);
   });
+  clearDestinationButton?.addEventListener("click", clearDestination);
+  clearRouteDestinationButton?.addEventListener("click", clearDestination);
   routeButton?.addEventListener("click", searchRoute);
   clearRouteButton?.addEventListener("click", () => clearDisplayedRoute(true));
   locationButton?.addEventListener("click", centerOnCurrentLocation);

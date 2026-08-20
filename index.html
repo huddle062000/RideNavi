@@ -4,11 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#1a73e8">
-  <title>Ride Navi 2.5.0 β</title>
+  <title>Ride Navi 2.5.1 β</title>
   <link rel="manifest" href="manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="stylesheet" href="style.css?v=2.5.0">
+  <link rel="stylesheet" href="style.css?v=2.5.1">
 </head>
 <body>
   <main id="app">
@@ -17,13 +17,17 @@
     <header id="searchBar" class="search-bar">
       <span class="search-icon" aria-hidden="true">⌕</span>
       <input id="destinationInput" type="search" placeholder="目的地を検索" autocomplete="off" aria-label="目的地を検索">
-      <button id="topMapButton" type="button" aria-label="地図から目的地を選ぶ">MAP</button>
     </header>
 
     <section id="destinationPanel" class="bottom-sheet destination-sheet" hidden aria-label="目的地とルート条件">
       <div class="sheet-handle" aria-hidden="true"></div>
-      <strong id="destinationName">選択した目的地</strong>
-      <span id="destinationAddress">地図上の地点</span>
+      <div class="destination-heading">
+        <div class="destination-details">
+          <strong id="destinationName">選択した目的地</strong>
+          <span id="destinationAddress">地図上の地点</span>
+        </div>
+        <button id="clearDestinationButton" class="destination-close" type="button" aria-label="目的地を解除">×</button>
+      </div>
       <fieldset class="road-mode-group">
         <legend>道路タイプ</legend>
         <label><input type="radio" name="destinationRouteMode" value="highway"><span>高速優先</span></label>
@@ -39,6 +43,7 @@
         <strong id="routeSummaryRoadType">一般道</strong>
         <span id="routeSummarySelection">選択中 ①</span>
         <span id="routeSummaryToll" hidden></span>
+        <button id="clearRouteDestinationButton" class="destination-close compact" type="button" aria-label="目的地とルートを解除">×</button>
       </div>
       <fieldset class="road-mode-group compact">
         <legend>道路タイプを変更</legend>
@@ -105,6 +110,6 @@
   </main>
   <script src="config.js"></script>
   <script src="src/map.js"></script>
-  <script src="app.js?v=2.5.0"></script>
+  <script src="app.js?v=2.5.1"></script>
 </body>
 </html>
