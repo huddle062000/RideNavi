@@ -149,9 +149,11 @@
   const REROUTE_COOLDOWN_MS = 20000;
   const NAVIGATION_START_ZOOM_MOBILE = 17.5;
   const NAVIGATION_START_ZOOM_DESKTOP = 17;
-  const NAVIGATION_START_ZOOM_DELAY_MS = 180;
-  const NAVIGATION_START_HEADING_DELAY_MS = 420;
-  const NAVIGATION_START_FOLLOW_DELAY_MS = 680;
+  const NAVIGATION_START_PAN_DURATION_MS = 700;
+  const NAVIGATION_START_ZOOM_DELAY_MS = 250;
+  const NAVIGATION_START_ZOOM_DURATION_MS = 1150;
+  const NAVIGATION_START_HEADING_DELAY_MS = 1500;
+  const NAVIGATION_START_FOLLOW_DELAY_MS = 1750;
   const clearRouteButton = $("clearRouteButton");
   const locationButton = $("locationButton");
   const floatingLocationButton = $("floatingLocationButton");
@@ -186,6 +188,8 @@
   let longPressTimer = null;
   let navigationOverviewActive = false;
   let navigationStartAnimationTimers = [];
+  let navigationStartPanFrame = null;
+  let navigationStartZoomFrame = null;
   const routeSearchCache = new Map();
 
   function showStatus(message, autoHide = false) {
@@ -2320,6 +2324,14 @@ function showRouteChoices(candidates, searchId) {
   function cancelNavigationStartMapAnimation() {
     navigationStartAnimationTimers.forEach((timer) => clearTimeout(timer));
     navigationStartAnimationTimers = [];
+    if (navigationStartPanFrame !== null) {
+      window.cancelAnimationFrame(navigationStartPanFrame);
+      navigationStartPanFrame = null;
+    }
+    if (navigationStartZoomFrame !== null) {
+      window.cancelAnimationFrame(navigationStartZoomFrame);
+      navigationStartZoomFrame = null;
+    }
   }
 
   function navigationStartMapHeading(point) {
@@ -2342,6 +2354,79 @@ function showRouteChoices(candidates, searchId) {
     return forwardPoint ? bearingBetweenPoints(point, forwardPoint) : null;
   }
 
+  function animateNavigationStartPan(point) {
+    const startCenter = map.getCenter();
+    if (!startCenter || typeof window.requestAnimationFrame !== "function") {
+      map.panTo(point);
+      return;
+    }
+
+    const startLat = startCenter.lat();
+    const startLng = startCenter.lng();
+    const longitudeDelta = ((point.lng - startLng + 540) % 360) - 180;
+    let startTime = null;
+    const step = (timestamp) => {
+      if (!navigationActive) {
+        navigationStartPanFrame = null;
+        return;
+      }
+      if (startTime === null) startTime = timestamp;
+      const progress = Math.min(
+        1,
+        (timestamp - startTime) / NAVIGATION_START_PAN_DURATION_MS
+      );
+      const easedProgress = 1 - (1 - progress) ** 3;
+      map.setCenter({
+        lat: startLat + (point.lat - startLat) * easedProgress,
+        lng: startLng + longitudeDelta * easedProgress
+      });
+
+      if (progress < 1) {
+        navigationStartPanFrame = window.requestAnimationFrame(step);
+      } else {
+        map.setCenter(point);
+        navigationStartPanFrame = null;
+      }
+    };
+    navigationStartPanFrame = window.requestAnimationFrame(step);
+  }
+
+  function animateNavigationStartZoom(targetZoom) {
+    const startZoom = map.getZoom();
+    if (
+      !Number.isFinite(startZoom) ||
+      typeof window.requestAnimationFrame !== "function"
+    ) {
+      map.setZoom(targetZoom);
+      return;
+    }
+
+    let startTime = null;
+    const step = (timestamp) => {
+      if (!navigationActive) {
+        navigationStartZoomFrame = null;
+        return;
+      }
+      if (startTime === null) startTime = timestamp;
+      const progress = Math.min(
+        1,
+        (timestamp - startTime) / NAVIGATION_START_ZOOM_DURATION_MS
+      );
+      const easedProgress = progress < 0.5
+        ? 4 * progress ** 3
+        : 1 - (-2 * progress + 2) ** 3 / 2;
+      map.setZoom(startZoom + (targetZoom - startZoom) * easedProgress);
+
+      if (progress < 1) {
+        navigationStartZoomFrame = window.requestAnimationFrame(step);
+      } else {
+        map.setZoom(targetZoom);
+        navigationStartZoomFrame = null;
+      }
+    };
+    navigationStartZoomFrame = window.requestAnimationFrame(step);
+  }
+
   function animateNavigationStartMap(point) {
     cancelNavigationStartMapAnimation();
     const targetZoom = window.matchMedia("(max-width: 699px)").matches
@@ -2354,7 +2439,6 @@ function showRouteChoices(candidates, searchId) {
     );
 
     followToggle.checked = false;
-    map.panTo(point);
 
     const applyHeadingAndOffset = () => {
       if (!navigationActive) return;
@@ -2376,15 +2460,17 @@ function showRouteChoices(candidates, searchId) {
     };
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      map.panTo(point);
       map.setZoom(targetZoom);
       applyHeadingAndOffset();
       enableFollow();
       return;
     }
 
+    animateNavigationStartPan(point);
     navigationStartAnimationTimers.push(
       setTimeout(() => {
-        if (navigationActive) map.setZoom(targetZoom);
+        if (navigationActive) animateNavigationStartZoom(targetZoom);
       }, NAVIGATION_START_ZOOM_DELAY_MS),
       setTimeout(applyHeadingAndOffset, NAVIGATION_START_HEADING_DELAY_MS),
       setTimeout(enableFollow, NAVIGATION_START_FOLLOW_DELAY_MS)
