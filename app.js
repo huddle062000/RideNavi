@@ -397,7 +397,7 @@
     }
   }
 
-  function updateDestinationDetails(latLng) {
+  function updateDestinationDetails(latLng, selectedPlaceId = "") {
     const selectionId = ++destinationSelectionId;
     const lat = latLng.lat().toFixed(6);
     const lng = latLng.lng().toFixed(6);
@@ -420,6 +420,10 @@
       destinationMarker.setPosition(latLng);
     }
 
+    if (selectedPlaceId) {
+      void loadDestinationPlaceDetails(selectedPlaceId, selectionId);
+    }
+
     geocoder?.geocode({ location: latLng }, (results, status) => {
       if (
         selectionId !== destinationSelectionId ||
@@ -429,17 +433,25 @@
         return;
       }
       const result = results[0];
-      const namedResult = results.find((candidate) =>
-        candidate.types?.some((type) =>
-          ["establishment", "point_of_interest", "premise", "natural_feature"].includes(type)
-        )
-      );
+      const exactPlaceResult = selectedPlaceId
+        ? results.find((candidate) => candidate.place_id === selectedPlaceId)
+        : null;
+      const namedResult = exactPlaceResult ||
+        results.find((candidate) =>
+          candidate.types?.some((type) =>
+            ["establishment", "point_of_interest", "premise", "natural_feature"].includes(type)
+          )
+        );
       const placeName = namedResult?.address_components?.[0]?.long_name || "";
-      const address = result.formatted_address || coordinate;
-      destinationName.textContent = placeName || address;
-      destinationAddress.textContent = placeName ? address : coordinate;
-      destinationMarker?.setTitle(placeName || address || "目的地");
-      if (namedResult?.place_id) {
+      const address = (exactPlaceResult || result).formatted_address || coordinate;
+      const placeDetailsNotLoaded =
+        !selectedPlaceId || destinationName.textContent === "選択した目的地";
+      if (placeDetailsNotLoaded) {
+        destinationName.textContent = placeName || address;
+        destinationAddress.textContent = placeName ? address : coordinate;
+        destinationMarker?.setTitle(placeName || address || "目的地");
+      }
+      if (!selectedPlaceId && namedResult?.place_id) {
         void loadDestinationPlaceDetails(namedResult.place_id, selectionId);
       }
     });
@@ -3632,6 +3644,7 @@ followToggle.checked = true;
     let longPressStartPoint = null;
     let longPressPointerId = null;
     let longPressPointerType = null;
+    let longPressCompleted = false;
 
     const cancelLongPress = () => {
       if (longPressTimer) clearTimeout(longPressTimer);
@@ -3659,6 +3672,7 @@ followToggle.checked = true;
 
     if (supportsPointerEvents) {
       mapDiv.addEventListener("pointerdown", (event) => {
+        longPressCompleted = false;
         activeMapPointers.set(event.pointerId, {
           pointerType: event.pointerType || "mouse",
           button: event.button,
@@ -3736,6 +3750,22 @@ followToggle.checked = true;
 
       map.addListener("click", (event) => {
         cancelLongPress();
+        const wasLongPress = longPressCompleted;
+        longPressCompleted = false;
+        const selectedPlaceId = String(event.placeId || "").trim();
+        if (selectedPlaceId && typeof event.stop === "function") {
+          event.stop();
+        }
+        if (wasLongPress) return;
+
+        if (selectedPlaceId) {
+          if (!event.latLng || navigationActive) return;
+          cancelMapSelection();
+          updateDestinationDetails(event.latLng, selectedPlaceId);
+          showStatus("目的地を設定しました", true);
+          return;
+        }
+
         if (
           !event.latLng ||
           !mapSelectionTarget ||
@@ -3755,6 +3785,7 @@ followToggle.checked = true;
 
       map.addListener("mousedown", (event) => {
         cancelLongPress();
+        longPressCompleted = false;
         const sourceEvent = event?.domEvent;
         const activePointer = activeMapPointers.size === 1
           ? activeMapPointers.entries().next().value
@@ -3799,6 +3830,7 @@ followToggle.checked = true;
           longPressStartPoint = null;
           longPressPointerId = null;
           longPressPointerType = null;
+          longPressCompleted = true;
           updateDestinationDetails(destinationLatLng);
           showStatus("目的地を設定しました", true);
         }, LONG_PRESS_DELAY_MS);
