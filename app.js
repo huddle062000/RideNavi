@@ -252,6 +252,17 @@
     if (routeSummaryPanel) routeSummaryPanel.hidden = true;
   }
 
+  function destinationRouteValue() {
+    const displayValue = destinationInput?.value.trim() || "";
+    const selectedLabel = destinationInput?.dataset.selectedLabel || "";
+    const selectedCoordinate =
+      destinationInput?.dataset.selectedCoordinate || "";
+
+    return selectedCoordinate && displayValue === selectedLabel
+      ? selectedCoordinate
+      : displayValue;
+  }
+
   function setOptionalDestinationText(element, text) {
     if (!element) return;
     element.textContent = text || "";
@@ -412,7 +423,12 @@
       if (selectionId !== destinationSelectionId) return;
 
       const displayName = place.displayName?.text || place.displayName || "";
-      if (displayName) destinationName.textContent = displayName;
+      if (displayName) {
+        destinationName.textContent = displayName;
+        destinationInput.value = displayName;
+        destinationInput.dataset.selectedLabel = displayName;
+        updateRouteEndpointsSummary();
+      }
       if (place.formattedAddress) destinationAddress.textContent = place.formattedAddress;
       destinationMarker?.setTitle(displayName || place.formattedAddress || "目的地");
 
@@ -494,6 +510,8 @@
     cancelPendingRouteSearch();
     clearDisplayedRoute(false);
     destinationInput.value = coordinate;
+    destinationInput.dataset.selectedCoordinate = coordinate;
+    destinationInput.dataset.selectedLabel = coordinate;
     updateRouteEndpointsSummary();
     updateRouteInfoEmpty();
     showDestinationPanel(displayCoordinate, coordinate);
@@ -538,6 +556,8 @@
     destinationMarker?.setMap(null);
     destinationMarker = null;
     destinationInput.value = "";
+    delete destinationInput.dataset.selectedCoordinate;
+    delete destinationInput.dataset.selectedLabel;
     destinationName.textContent = "選択した目的地";
     destinationAddress.textContent = "地図上の地点";
     resetDestinationPlaceDetails();
@@ -2584,7 +2604,7 @@ followToggle.checked = true;
   function rerouteFromCurrentLocation(point) {
     if (!directionsService || rerouteInProgress) return;
 
-    const destination = destinationInput.value.trim();
+    const destination = destinationRouteValue();
 
     if (!destination) {
       showStatus("目的地がないため再検索できません");
@@ -2782,7 +2802,7 @@ followToggle.checked = true;
 
   function buildShareUrl() {
     const originText = originInput.value.trim();
-    const destinationText = destinationInput.value.trim();
+    const destinationText = destinationRouteValue();
     const waypoints = getWaypointValues();
 
     if (!originText || !destinationText) {
@@ -2966,12 +2986,13 @@ followToggle.checked = true;
     }
 
     const originText = originInput.value.trim();
-    const destinationText = destinationInput.value.trim();
+    const destinationDisplayText = destinationInput.value.trim();
+    const destinationText = destinationRouteValue();
     const waypointValues = getWaypointValues();
     const selectedPreference =
       document.getElementById("routeMode")?.value || "local";
 
-    if (!originText || !destinationText) {
+    if (!originText || !destinationDisplayText) {
       showStatus("出発地と目的地を入力してください");
       return;
     }
@@ -2981,8 +3002,8 @@ followToggle.checked = true;
       (!destinationName.textContent ||
         destinationName.textContent === "選択した目的地")
     ) {
-      destinationName.textContent = destinationText;
-      if (destinationAddress) destinationAddress.textContent = destinationText;
+      destinationName.textContent = destinationDisplayText;
+      if (destinationAddress) destinationAddress.textContent = destinationDisplayText;
     }
 
     let origin = originText;
@@ -4014,7 +4035,11 @@ followToggle.checked = true;
     if (event.key === "Enter") searchRoute();
   });
 
-  destinationInput?.addEventListener("input", updateRouteEndpointsSummary);
+  destinationInput?.addEventListener("input", () => {
+    delete destinationInput.dataset.selectedCoordinate;
+    delete destinationInput.dataset.selectedLabel;
+    updateRouteEndpointsSummary();
+  });
 
   routeModeInputs().forEach((input) => {
     input.addEventListener("change", () => {
