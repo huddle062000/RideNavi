@@ -126,6 +126,14 @@
   const destinationPanel = $("destinationPanel");
   const destinationName = $("destinationName");
   const destinationAddress = $("destinationAddress");
+  const destinationRating = $("destinationRating");
+  const destinationOpenStatus = $("destinationOpenStatus");
+  const destinationHours = $("destinationHours");
+  const destinationPhone = $("destinationPhone");
+  const destinationAccessibility = $("destinationAccessibility");
+  const destinationAttribution = $("destinationAttribution");
+  const destinationNavigationButton = $("destinationNavigationButton");
+  const destinationShareButton = $("destinationShareButton");
   const clearDestinationButton = $("clearDestinationButton");
   const clearRouteDestinationButton = $("clearRouteDestinationButton");
   const navigationGuidance = $("navigationGuidance");
@@ -239,10 +247,141 @@
 
   function showDestinationPanel(name, address = "地図上の地点") {
     if (!destinationPanel) return;
+    resetDestinationPlaceDetails();
     destinationName.textContent = name || "選択した目的地";
     destinationAddress.textContent = address || "地図上の地点";
     destinationPanel.hidden = false;
     if (routeSummaryPanel) routeSummaryPanel.hidden = true;
+  }
+
+  function setOptionalDestinationText(element, text) {
+    if (!element) return;
+    element.textContent = text || "";
+    element.hidden = !text;
+  }
+
+  function resetDestinationPlaceDetails() {
+    setOptionalDestinationText(destinationRating, "");
+    setOptionalDestinationText(destinationOpenStatus, "");
+    destinationOpenStatus?.classList.remove("is-closed");
+    setOptionalDestinationText(destinationHours, "");
+    if (destinationHours) destinationHours.removeAttribute("title");
+    setOptionalDestinationText(destinationPhone, "");
+    setOptionalDestinationText(destinationAccessibility, "");
+    setOptionalDestinationText(destinationAttribution, "");
+  }
+
+  function formatDestinationAttribution(attributions = []) {
+    const providers = (attributions || [])
+      .map((attribution) =>
+        typeof attribution === "string"
+          ? attribution
+          : attribution?.provider || attribution?.providerName || ""
+      )
+      .filter(Boolean);
+    const uniqueProviders = [...new Set(providers)];
+    return uniqueProviders.length
+      ? `施設情報: Google Maps / ${uniqueProviders.join(" / ")}`
+      : "施設情報: Google Maps";
+  }
+
+  function formatAccessibilityOptions(options) {
+    if (!options) return "";
+    const available = [
+      ["hasWheelchairAccessibleEntrance", "車いす対応の入口"],
+      ["hasWheelchairAccessibleParking", "車いす対応駐車場"],
+      ["hasWheelchairAccessibleRestroom", "車いす対応トイレ"],
+      ["hasWheelchairAccessibleSeating", "車いす対応席"]
+    ]
+      .filter(([key]) => options[key] === true)
+      .map(([, label]) => label);
+    return available.join("・");
+  }
+
+  async function loadDestinationPlaceDetails(placeId, selectionId) {
+    if (!placeId || !google.maps.importLibrary) return;
+
+    try {
+      const { Place } = await google.maps.importLibrary("places");
+      const place = new Place({
+        id: placeId,
+        requestedLanguage: "ja",
+        requestedRegion: "JP"
+      });
+      await place.fetchFields({
+        fields: [
+          "displayName",
+          "formattedAddress",
+          "rating",
+          "businessStatus",
+          "currentOpeningHours",
+          "regularOpeningHours",
+          "utcOffsetMinutes",
+          "nationalPhoneNumber",
+          "accessibilityOptions"
+        ]
+      });
+      if (selectionId !== destinationSelectionId) return;
+
+      const displayName = place.displayName?.text || place.displayName || "";
+      if (displayName) destinationName.textContent = displayName;
+      if (place.formattedAddress) destinationAddress.textContent = place.formattedAddress;
+      destinationMarker?.setTitle(displayName || place.formattedAddress || "目的地");
+
+      setOptionalDestinationText(
+        destinationRating,
+        Number.isFinite(place.rating) ? `★ ${place.rating.toFixed(1)}` : ""
+      );
+
+      let openStatus = "";
+      if (place.businessStatus === "CLOSED_PERMANENTLY") {
+        openStatus = "閉業";
+      } else if (place.businessStatus === "CLOSED_TEMPORARILY") {
+        openStatus = "臨時休業";
+      } else {
+        try {
+          const isOpen = await place.isOpen();
+          if (selectionId !== destinationSelectionId) return;
+          if (typeof isOpen === "boolean") {
+            openStatus = isOpen ? "営業中" : "営業時間外";
+          }
+        } catch (_error) {
+          // 営業状態が取得できない場合は、項目自体を表示しない。
+        }
+      }
+      setOptionalDestinationText(destinationOpenStatus, openStatus);
+      destinationOpenStatus?.classList.toggle(
+        "is-closed",
+        Boolean(openStatus && openStatus !== "営業中")
+      );
+
+      const openingHours =
+        place.currentOpeningHours?.weekdayDescriptions ||
+        place.regularOpeningHours?.weekdayDescriptions ||
+        [];
+      setOptionalDestinationText(
+        destinationHours,
+        openingHours.length ? `営業時間: ${openingHours.join(" / ")}` : ""
+      );
+      if (destinationHours && openingHours.length) {
+        destinationHours.title = openingHours.join("\n");
+      }
+      setOptionalDestinationText(
+        destinationPhone,
+        place.nationalPhoneNumber ? `電話: ${place.nationalPhoneNumber}` : ""
+      );
+      const accessibility = formatAccessibilityOptions(place.accessibilityOptions);
+      setOptionalDestinationText(
+        destinationAccessibility,
+        accessibility ? `バリアフリー: ${accessibility}` : ""
+      );
+      setOptionalDestinationText(
+        destinationAttribution,
+        formatDestinationAttribution(place.attributions)
+      );
+    } catch (_error) {
+      // Places API が利用できない場合も、逆ジオコードの名称・住所を維持する。
+    }
   }
 
   function cancelPendingRouteSearch() {
@@ -297,6 +436,9 @@
       destinationName.textContent = placeName || address;
       destinationAddress.textContent = placeName ? address : coordinate;
       destinationMarker?.setTitle(placeName || address || "目的地");
+      if (namedResult?.place_id) {
+        void loadDestinationPlaceDetails(namedResult.place_id, selectionId);
+      }
     });
   }
 
@@ -310,6 +452,7 @@
     destinationInput.value = "";
     destinationName.textContent = "選択した目的地";
     destinationAddress.textContent = "地図上の地点";
+    resetDestinationPlaceDetails();
     destinationPanel.hidden = true;
     updateRouteEndpointsSummary();
     showStatus("目的地を解除しました", true);
@@ -3697,6 +3840,8 @@ followToggle.checked = true;
   clearDestinationButton?.addEventListener("click", clearDestination);
   clearRouteDestinationButton?.addEventListener("click", clearDestination);
   routeButton?.addEventListener("click", searchRoute);
+  destinationNavigationButton?.addEventListener("click", toggleNavigation);
+  destinationShareButton?.addEventListener("click", shareRouteUrl);
   clearRouteButton?.addEventListener("click", () => clearDisplayedRoute(true));
   locationButton?.addEventListener("click", centerOnCurrentLocation);
   floatingLocationButton?.addEventListener("click", centerOnCurrentLocation);

@@ -4,11 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#1a73e8">
-  <title>Ride Navi 2.5.2 β</title>
+  <title>Ride Navi 2.5.3 β</title>
   <link rel="manifest" href="manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="stylesheet" href="style.css?v=2.5.2">
+  <link rel="stylesheet" href="style.css?v=2.5.3">
 </head>
 <body>
   <main id="app">
@@ -24,17 +24,31 @@
       <div class="destination-heading">
         <div class="destination-details">
           <strong id="destinationName">選択した目的地</strong>
-          <span id="destinationAddress">地図上の地点</span>
+          <div class="destination-meta" aria-label="施設情報">
+            <span id="destinationRating" class="destination-rating" hidden></span>
+            <span id="destinationOpenStatus" class="destination-open-status" hidden></span>
+          </div>
         </div>
         <button id="clearDestinationButton" class="destination-close" type="button" aria-label="目的地を解除">×</button>
       </div>
+      <div class="destination-info-list">
+        <p id="destinationAddress" class="destination-info-row destination-address">地図上の地点</p>
+        <p id="destinationHours" class="destination-info-row" hidden></p>
+        <p id="destinationPhone" class="destination-info-row" hidden></p>
+        <p id="destinationAccessibility" class="destination-info-row" hidden></p>
+      </div>
+      <small id="destinationAttribution" class="destination-attribution" hidden></small>
       <fieldset class="road-mode-group">
         <legend>道路タイプ</legend>
         <label><input type="radio" name="destinationRouteMode" value="highway"><span>高速優先</span></label>
         <label><input type="radio" name="destinationRouteMode" value="partial"><span>一部有料</span></label>
         <label><input type="radio" name="destinationRouteMode" value="local" checked><span>一般道</span></label>
       </fieldset>
-      <button id="routeButton" class="primary-action" type="button">ルート検索</button>
+      <div class="destination-actions" aria-label="目的地の操作">
+        <button id="routeButton" class="primary-action" type="button">経路</button>
+        <button id="destinationNavigationButton" type="button">ナビ開始</button>
+        <button id="destinationShareButton" type="button">共有</button>
+      </div>
     </section>
 
     <section id="routeSummaryPanel" class="bottom-sheet route-summary-panel" hidden aria-label="選択中のルート情報">
@@ -110,6 +124,6 @@
   </main>
   <script src="config.js"></script>
   <script src="src/map.js"></script>
-  <script src="app.js?v=2.5.2"></script>
+  <script src="app.js?v=2.5.3"></script>
 </body>
 </html>
