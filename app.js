@@ -147,6 +147,11 @@
   const OFF_ROUTE_DISTANCE_METERS = 80;
   const OFF_ROUTE_REQUIRED_COUNT = 2;
   const REROUTE_COOLDOWN_MS = 20000;
+  const NAVIGATION_START_ZOOM_MOBILE = 17.5;
+  const NAVIGATION_START_ZOOM_DESKTOP = 17;
+  const NAVIGATION_START_ZOOM_DELAY_MS = 180;
+  const NAVIGATION_START_HEADING_DELAY_MS = 420;
+  const NAVIGATION_START_FOLLOW_DELAY_MS = 680;
   const clearRouteButton = $("clearRouteButton");
   const locationButton = $("locationButton");
   const floatingLocationButton = $("floatingLocationButton");
@@ -180,6 +185,7 @@
   let routeLabelOverlays = [];
   let longPressTimer = null;
   let navigationOverviewActive = false;
+  let navigationStartAnimationTimers = [];
   const routeSearchCache = new Map();
 
   function showStatus(message, autoHide = false) {
@@ -2311,6 +2317,76 @@ function showRouteChoices(candidates, searchId) {
     if (icon) userMarker.setIcon(icon);
   }
 
+  function cancelNavigationStartMapAnimation() {
+    navigationStartAnimationTimers.forEach((timer) => clearTimeout(timer));
+    navigationStartAnimationTimers = [];
+  }
+
+  function navigationStartMapHeading(point) {
+    if (Number.isFinite(lastKnownHeading)) return lastKnownHeading;
+    if (!routePathPoints.length) return null;
+
+    let nearestIndex = 0;
+    let nearestDistance = Infinity;
+    routePathPoints.forEach((routePoint, index) => {
+      const distance = distanceBetweenMeters(point, routePoint);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    const forwardPoint = routePathPoints
+      .slice(nearestIndex + 1)
+      .find((routePoint) => distanceBetweenMeters(point, routePoint) >= 60);
+    return forwardPoint ? bearingBetweenPoints(point, forwardPoint) : null;
+  }
+
+  function animateNavigationStartMap(point) {
+    cancelNavigationStartMapAnimation();
+    const targetZoom = window.matchMedia("(max-width: 699px)").matches
+      ? NAVIGATION_START_ZOOM_MOBILE
+      : NAVIGATION_START_ZOOM_DESKTOP;
+    const startHeading = navigationStartMapHeading(point);
+    const forwardOffset = Math.min(
+      90,
+      Math.max(54, map.getDiv().clientHeight * 0.12)
+    );
+
+    followToggle.checked = false;
+    map.panTo(point);
+
+    const applyHeadingAndOffset = () => {
+      if (!navigationActive) return;
+      const currentHeading = Number.isFinite(lastKnownHeading)
+        ? lastKnownHeading
+        : startHeading;
+      if (Number.isFinite(currentHeading)) map.setHeading(currentHeading);
+      updateLocationMarkerHeading();
+      map.panBy(0, forwardOffset);
+    };
+    const enableFollow = () => {
+      if (!navigationActive) return;
+      followToggle.checked = true;
+      navigationStartAnimationTimers = [];
+    };
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      map.setZoom(targetZoom);
+      applyHeadingAndOffset();
+      enableFollow();
+      return;
+    }
+
+    navigationStartAnimationTimers.push(
+      setTimeout(() => {
+        if (navigationActive) map.setZoom(targetZoom);
+      }, NAVIGATION_START_ZOOM_DELAY_MS),
+      setTimeout(applyHeadingAndOffset, NAVIGATION_START_HEADING_DELAY_MS),
+      setTimeout(enableFollow, NAVIGATION_START_FOLLOW_DELAY_MS)
+    );
+  }
+
   function updateGps(position) {
     currentPosition = position;
 
@@ -2903,13 +2979,8 @@ followToggle.checked = true;
       updateNavigationInfoPanel(lastRouteResult.routes[0]);
     }
     showNavigationInfoPanel();
-    followToggle.checked = true;
     userMarker?.setVisible(true);
-    map.panTo(point);
-    map.setZoom(18);
-    if (Number.isFinite(lastKnownHeading)) {
-      map.setHeading(lastKnownHeading);
-    }
+    animateNavigationStartMap(point);
     if (headingButton) {
       headingButton.classList.add("active");
       headingButton.setAttribute("aria-pressed", "true");
@@ -2934,6 +3005,7 @@ followToggle.checked = true;
   }
 
   function stopNavigation(speak = true) {
+    cancelNavigationStartMapAnimation();
     navigationActive = false;
     offRouteCount = 0;
     rerouteInProgress = false;
