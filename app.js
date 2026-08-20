@@ -311,28 +311,6 @@
     return `${hour}:${minute}まで`;
   }
 
-  function formatGeocoderPlaceCategory(types = []) {
-    const categoryByType = {
-      hospital: "病院",
-      health: "医療施設",
-      pharmacy: "薬局",
-      shopping_mall: "ショッピングモール",
-      supermarket: "スーパーマーケット",
-      convenience_store: "コンビニエンスストア",
-      restaurant: "レストラン",
-      cafe: "カフェ",
-      gas_station: "ガソリンスタンド",
-      parking: "駐車場",
-      lodging: "宿泊施設",
-      tourist_attraction: "観光スポット",
-      park: "公園",
-      school: "学校",
-      store: "店舗"
-    };
-    const matchedType = types.find((type) => categoryByType[type]);
-    return matchedType ? categoryByType[matchedType] : "";
-  }
-
   async function loadDestinationPlaceDetails(placeId, selectionId) {
     if (!placeId || !google.maps.importLibrary) return;
 
@@ -367,7 +345,6 @@
         destinationAttribution,
         formatDestinationAttribution(place.attributions)
       );
-
       let openStatus = "";
       try {
         await place.fetchFields({
@@ -405,16 +382,24 @@
             }
           }
         }
-      } catch (_error) {
+      } catch (error) {
         // 営業情報が取得できなくても、先に取得した施設名とカテゴリーは維持する。
+        console.error("[Ride Navi] POIの営業情報取得に失敗しました", {
+          placeId,
+          error
+        });
       }
       setOptionalDestinationText(destinationBusinessInfo, openStatus);
       destinationBusinessInfo?.classList.toggle(
         "is-closed",
         Boolean(openStatus && !openStatus.startsWith("営業中"))
       );
-    } catch (_error) {
+    } catch (error) {
       // Places API が利用できない場合も、逆ジオコードの名称・住所を維持する。
+      console.error("[Ride Navi] POIの基本情報取得に失敗しました", {
+        placeId,
+        error
+      });
     }
   }
 
@@ -453,12 +438,10 @@
 
     if (selectedPlaceId) {
       void loadDestinationPlaceDetails(selectedPlaceId, selectionId);
+      return;
     }
 
-    const geocodeRequest = selectedPlaceId
-      ? { placeId: selectedPlaceId }
-      : { location: latLng };
-    geocoder?.geocode(geocodeRequest, (results, status) => {
+    geocoder?.geocode({ location: latLng }, (results, status) => {
       if (
         selectionId !== destinationSelectionId ||
         status !== "OK" ||
@@ -467,29 +450,17 @@
         return;
       }
       const result = results[0];
-      const exactPlaceResult = selectedPlaceId ? result : null;
-      const namedResult = exactPlaceResult ||
-        results.find((candidate) =>
-          candidate.types?.some((type) =>
-            ["establishment", "point_of_interest", "premise", "natural_feature"].includes(type)
-          )
-        );
+      const namedResult = results.find((candidate) =>
+        candidate.types?.some((type) =>
+          ["establishment", "point_of_interest", "premise", "natural_feature"].includes(type)
+        )
+      );
       const placeName = namedResult?.address_components?.[0]?.long_name || "";
-      const address = (exactPlaceResult || result).formatted_address || coordinate;
-      const placeDetailsNotLoaded =
-        !selectedPlaceId || destinationName.textContent === "選択した目的地";
-      if (placeDetailsNotLoaded) {
-        destinationName.textContent = placeName || address;
-        destinationAddress.textContent = placeName ? address : coordinate;
-        destinationMarker?.setTitle(placeName || address || "目的地");
-      }
-      if (selectedPlaceId && destinationCategory?.hidden) {
-        setOptionalDestinationText(
-          destinationCategory,
-          formatGeocoderPlaceCategory(exactPlaceResult?.types)
-        );
-      }
-      if (!selectedPlaceId && namedResult?.place_id) {
+      const address = result.formatted_address || coordinate;
+      destinationName.textContent = placeName || address;
+      destinationAddress.textContent = placeName ? address : coordinate;
+      destinationMarker?.setTitle(placeName || address || "目的地");
+      if (namedResult?.place_id) {
         void loadDestinationPlaceDetails(namedResult.place_id, selectionId);
       }
     });
