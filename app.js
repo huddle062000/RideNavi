@@ -9,6 +9,8 @@
   const AUTO_ROUTE_OFFSET_RATIO = 0.08;
   const AUTO_ROUTE_MAX_DURATION_RATIO = 1.3;
   const ROUTE_SEARCH_CACHE_LIMIT = 12;
+  const LONG_PRESS_DELAY_MS = 700;
+  const LONG_PRESS_MOVE_TOLERANCE_PX = 12;
   const HIGHWAY_GUIDANCE_PATTERNS = {
     entry: [
       /(?:高速|自動車道|有料道路|都市高速).*(?:入る|進入|合流)/,
@@ -3478,11 +3480,67 @@ followToggle.checked = true;
         tiltInteractionEnabled: false
       });
 
+    const mapDiv = map.getDiv();
+    const supportsPointerEvents = "PointerEvent" in window;
+    const activeMapPointers = new Set();
+    let longPressStartPoint = null;
+    let longPressPointerId = null;
+
+    const cancelLongPress = () => {
+      if (longPressTimer) clearTimeout(longPressTimer);
+      longPressTimer = null;
+      longPressStartPoint = null;
+      longPressPointerId = null;
+    };
+
+    const eventScreenPoint = (event) => {
+      const source = event?.domEvent || event;
+      const touch = source?.touches?.[0] || source?.changedTouches?.[0];
+      const clientX = touch?.clientX ?? source?.clientX;
+      const clientY = touch?.clientY ?? source?.clientY;
+
+      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+      return { x: clientX, y: clientY };
+    };
+
+    if (supportsPointerEvents) {
+      mapDiv.addEventListener("pointerdown", (event) => {
+        activeMapPointers.add(event.pointerId);
+        if (activeMapPointers.size > 1) cancelLongPress();
+      }, { capture: true, passive: true });
+
+      window.addEventListener("pointermove", (event) => {
+        if (
+          !longPressTimer ||
+          !longPressStartPoint ||
+          (longPressPointerId !== null && event.pointerId !== longPressPointerId)
+        ) {
+          return;
+        }
+
+        const distance = Math.hypot(
+          event.clientX - longPressStartPoint.x,
+          event.clientY - longPressStartPoint.y
+        );
+        if (distance > LONG_PRESS_MOVE_TOLERANCE_PX) cancelLongPress();
+      }, { capture: true, passive: true });
+
+      const finishPointer = (event) => {
+        activeMapPointers.delete(event.pointerId);
+        if (event.pointerId === longPressPointerId) cancelLongPress();
+      };
+      window.addEventListener("pointerup", finishPointer, {
+        capture: true,
+        passive: true
+      });
+      window.addEventListener("pointercancel", finishPointer, {
+        capture: true,
+        passive: true
+      });
+    }
+
     map.addListener("dragstart", () => {
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
+      if (!supportsPointerEvents || !longPressStartPoint) cancelLongPress();
       if (!followToggle) return;
 
       followToggle.checked = false;
@@ -3533,24 +3591,44 @@ followToggle.checked = true;
         showStatus(`📍 ${label}を設定しました`, true);
       });
 
-      const cancelLongPress = () => {
-        if (longPressTimer) clearTimeout(longPressTimer);
-        longPressTimer = null;
-      };
       map.addListener("mousedown", (event) => {
         cancelLongPress();
-        if (!event.latLng || navigationActive) return;
+        if (
+          !event.latLng ||
+          navigationActive ||
+          activeMapPointers.size > 1
+        ) {
+          return;
+        }
+
+        longPressStartPoint = eventScreenPoint(event);
+        longPressPointerId = event?.domEvent?.pointerId ??
+          (activeMapPointers.size === 1
+            ? activeMapPointers.values().next().value
+            : null);
+        const destinationLatLng = event.latLng;
         longPressTimer = setTimeout(() => {
-          updateDestinationDetails(event.latLng);
-          showStatus("目的地を設定しました", true);
+          if (activeMapPointers.size > 1 || navigationActive) {
+            cancelLongPress();
+            return;
+          }
+
           longPressTimer = null;
-        }, 650);
+          longPressStartPoint = null;
+          longPressPointerId = null;
+          updateDestinationDetails(destinationLatLng);
+          showStatus("目的地を設定しました", true);
+        }, LONG_PRESS_DELAY_MS);
       });
       map.addListener("mouseup", cancelLongPress);
-      map.addListener("drag", cancelLongPress);
+      map.addListener("drag", () => {
+        if (!supportsPointerEvents || !longPressStartPoint) cancelLongPress();
+      });
       map.addListener("zoom_changed", cancelLongPress);
       map.addListener("rightclick", (event) => {
-        if (!event.latLng || navigationActive) return;
+        const multiplePointersActive = activeMapPointers.size > 1;
+        cancelLongPress();
+        if (!event.latLng || navigationActive || multiplePointersActive) return;
         updateDestinationDetails(event.latLng);
         showStatus("目的地を設定しました", true);
       });
