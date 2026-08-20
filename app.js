@@ -2361,7 +2361,11 @@ function showRouteChoices(candidates, searchId) {
       const currentHeading = Number.isFinite(lastKnownHeading)
         ? lastKnownHeading
         : startHeading;
-      if (Number.isFinite(currentHeading)) map.setHeading(currentHeading);
+      if (headingUpEnabled && Number.isFinite(currentHeading)) {
+        map.setHeading(currentHeading);
+      } else if (!headingUpEnabled) {
+        map.setHeading(0);
+      }
       updateLocationMarkerHeading();
       map.panBy(0, forwardOffset);
     };
@@ -2970,6 +2974,7 @@ followToggle.checked = true;
     navigationButton.textContent = "■ ナビ終了";
     document.body.classList.add("is-navigating");
     document.body.classList.remove("is-overview");
+    $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
     if (navigationGuidance) navigationGuidance.hidden = false;
     if (navigationDestination) {
       navigationDestination.textContent =

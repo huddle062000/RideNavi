@@ -90,7 +90,7 @@ body.is-overview .navigation-guidance,body.is-overview .navigation-bottom,#rideN
 #rideNaviHeadingControl{position:fixed!important;z-index:39!important;right:16px!important;left:auto!important;bottom:calc(82px + env(safe-area-inset-bottom))!important;display:flex!important}
 #rideNaviHeadingControl button{width:52px!important;height:52px!important;border-radius:50%!important;background:#fff!important;color:#202124!important;box-shadow:0 2px 9px rgba(0,0,0,.3)!important;font-size:27px!important}
 #rideNaviHeadingControl button.active{background:#1a73e8!important;color:#fff!important}
-body.is-navigating #rideNaviHeadingControl{bottom:calc(200px + env(safe-area-inset-bottom))!important}
+body.is-navigating #rideNaviHeadingControl{z-index:50!important;bottom:calc(200px + env(safe-area-inset-bottom))!important;display:flex!important}
 
 @media(min-width:700px){.search-bar{left:50%;width:min(620px,calc(100vw - 20px));transform:translateX(-50%)}.navigation-guidance,.navigation-bottom{left:50%;right:auto;width:min(620px,calc(100vw - 16px));transform:translateX(-50%)}}
 @media(max-width:699px){.destination-sheet{left:0;right:0;bottom:0;max-width:none;margin:0;padding:8px 16px calc(16px + env(safe-area-inset-bottom));border-radius:26px 26px 0 0}}
