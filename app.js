@@ -10,7 +10,9 @@
   const AUTO_ROUTE_MAX_DURATION_RATIO = 1.3;
   const ROUTE_SEARCH_CACHE_LIMIT = 12;
   const LONG_PRESS_DELAY_MS = 550;
-  const LONG_PRESS_MOVE_TOLERANCE_PX = 24;
+  const TOUCH_LONG_PRESS_MOVE_TOLERANCE_PX = 24;
+  const MOUSE_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
+  const PEN_LONG_PRESS_MOVE_TOLERANCE_PX = 18;
   const HIGHWAY_GUIDANCE_PATTERNS = {
     entry: [
       /(?:高速|自動車道|有料道路|都市高速).*(?:入る|進入|合流)/,
@@ -3625,15 +3627,23 @@ followToggle.checked = true;
 
     const mapDiv = map.getDiv();
     const supportsPointerEvents = "PointerEvent" in window;
-    const activeMapPointers = new Set();
+    const activeMapPointers = new Map();
     let longPressStartPoint = null;
     let longPressPointerId = null;
+    let longPressPointerType = null;
 
     const cancelLongPress = () => {
       if (longPressTimer) clearTimeout(longPressTimer);
       longPressTimer = null;
       longPressStartPoint = null;
       longPressPointerId = null;
+      longPressPointerType = null;
+    };
+
+    const longPressMoveTolerance = (pointerType) => {
+      if (pointerType === "touch") return TOUCH_LONG_PRESS_MOVE_TOLERANCE_PX;
+      if (pointerType === "pen") return PEN_LONG_PRESS_MOVE_TOLERANCE_PX;
+      return MOUSE_LONG_PRESS_MOVE_TOLERANCE_PX;
     };
 
     const eventScreenPoint = (event) => {
@@ -3648,7 +3658,12 @@ followToggle.checked = true;
 
     if (supportsPointerEvents) {
       mapDiv.addEventListener("pointerdown", (event) => {
-        activeMapPointers.add(event.pointerId);
+        activeMapPointers.set(event.pointerId, {
+          pointerType: event.pointerType || "mouse",
+          button: event.button,
+          ctrlKey: event.ctrlKey,
+          point: { x: event.clientX, y: event.clientY }
+        });
         if (activeMapPointers.size > 1) cancelLongPress();
       }, { capture: true, passive: true });
 
@@ -3665,7 +3680,9 @@ followToggle.checked = true;
           event.clientX - longPressStartPoint.x,
           event.clientY - longPressStartPoint.y
         );
-        if (distance > LONG_PRESS_MOVE_TOLERANCE_PX) cancelLongPress();
+        if (distance > longPressMoveTolerance(longPressPointerType)) {
+          cancelLongPress();
+        }
       }, { capture: true, passive: true });
 
       const finishPointer = (event) => {
@@ -3717,6 +3734,7 @@ followToggle.checked = true;
       });
 
       map.addListener("click", (event) => {
+        cancelLongPress();
         if (
           !event.latLng ||
           !mapSelectionTarget ||
@@ -3736,19 +3754,39 @@ followToggle.checked = true;
 
       map.addListener("mousedown", (event) => {
         cancelLongPress();
+        const sourceEvent = event?.domEvent;
+        const activePointer = activeMapPointers.size === 1
+          ? activeMapPointers.entries().next().value
+          : null;
+        const hasTouch = Boolean(
+          sourceEvent?.touches?.length || sourceEvent?.changedTouches?.length
+        );
+        const pointerType =
+          sourceEvent?.pointerType ||
+          activePointer?.[1]?.pointerType ||
+          (hasTouch ? "touch" : "mouse");
+        const pointerButton = Number.isFinite(sourceEvent?.button)
+          ? sourceEvent.button
+          : activePointer?.[1]?.button;
+        const isContextMenuGesture =
+          pointerType === "mouse" &&
+          ((Number.isFinite(pointerButton) && pointerButton !== 0) ||
+            sourceEvent?.ctrlKey ||
+            activePointer?.[1]?.ctrlKey);
         if (
           !event.latLng ||
           navigationActive ||
-          activeMapPointers.size > 1
+          activeMapPointers.size > 1 ||
+          isContextMenuGesture
         ) {
           return;
         }
 
-        longPressStartPoint = eventScreenPoint(event);
+        longPressStartPoint = eventScreenPoint(event) || activePointer?.[1]?.point || null;
+        if (!longPressStartPoint) return;
         longPressPointerId = event?.domEvent?.pointerId ??
-          (activeMapPointers.size === 1
-            ? activeMapPointers.values().next().value
-            : null);
+          activePointer?.[0] ?? null;
+        longPressPointerType = pointerType;
         const destinationLatLng = event.latLng;
         longPressTimer = setTimeout(() => {
           if (activeMapPointers.size > 1 || navigationActive) {
@@ -3759,22 +3797,19 @@ followToggle.checked = true;
           longPressTimer = null;
           longPressStartPoint = null;
           longPressPointerId = null;
+          longPressPointerType = null;
           updateDestinationDetails(destinationLatLng);
           showStatus("目的地を設定しました", true);
         }, LONG_PRESS_DELAY_MS);
       });
-      map.addListener("mouseup", cancelLongPress);
+      map.addListener("mouseup", () => {
+        if (!supportsPointerEvents) cancelLongPress();
+      });
       map.addListener("drag", () => {
         if (!supportsPointerEvents || !longPressStartPoint) cancelLongPress();
       });
       map.addListener("zoom_changed", cancelLongPress);
-      map.addListener("rightclick", (event) => {
-        const multiplePointersActive = activeMapPointers.size > 1;
-        cancelLongPress();
-        if (!event.latLng || navigationActive || multiplePointersActive) return;
-        updateDestinationDetails(event.latLng);
-        showStatus("目的地を設定しました", true);
-      });
+      map.addListener("contextmenu", cancelLongPress);
 
       trafficLayer = new google.maps.TrafficLayer();
       bikeMarkerImage = new Image();
