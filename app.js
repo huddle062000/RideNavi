@@ -1112,50 +1112,180 @@
     return segments;
   }
 
-function createRouteLabelOverlay({
-  position,
-  duration,
-  distance,
-  isSelected,
-  onSelect
-}) {
+function routeLabelCandidatePositions(route, candidateIndex, isSelected) {
+  const path = route.overview_path || [];
+  if (!path.length) return [];
+
+  const unselectedFractions = [0.34, 0.66, 0.5];
+  const preferredFraction = isSelected
+    ? 0.5
+    : unselectedFractions[candidateIndex % unselectedFractions.length];
+  const offsets = [0, 0.1, -0.1, 0.2, -0.2, 0.3, -0.3];
+  const usedIndexes = new Set();
+
+  return offsets
+    .map((offset) => Math.min(0.86, Math.max(0.14, preferredFraction + offset)))
+    .map((fraction) => Math.round((path.length - 1) * fraction))
+    .filter((pathIndex) => {
+      if (usedIndexes.has(pathIndex)) return false;
+      usedIndexes.add(pathIndex);
+      return true;
+    })
+    .map((pathIndex) => path[pathIndex]);
+}
+
+function routeLabelObstacleRects(mapRect) {
+  return [$("searchBar"), destinationPanel, routeSummaryPanel, controlPanel]
+    .filter((element) => {
+      if (!element || element.hidden) return false;
+      return window.getComputedStyle(element).display !== "none";
+    })
+    .map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left - mapRect.left,
+        top: rect.top - mapRect.top,
+        right: rect.right - mapRect.left,
+        bottom: rect.bottom - mapRect.top
+      };
+    });
+}
+
+function routeLabelRect(point, width, height) {
+  return {
+    left: point.x - width / 2,
+    top: point.y - height - 10,
+    right: point.x + width / 2,
+    bottom: point.y - 10
+  };
+}
+
+function routeLabelOverlapArea(first, second, gap = 8) {
+  const width = Math.max(
+    0,
+    Math.min(first.right, second.right + gap) -
+      Math.max(first.left, second.left - gap)
+  );
+  const height = Math.max(
+    0,
+    Math.min(first.bottom, second.bottom + gap) -
+      Math.max(first.top, second.top - gap)
+  );
+  return width * height;
+}
+
+function routeLabelPlacementScore(
+  rect,
+  candidateOrder,
+  mapWidth,
+  mapHeight,
+  occupiedRects,
+  obstacleRects
+) {
+  const edgeMargin = 8;
+  const overflow =
+    Math.max(0, edgeMargin - rect.left) +
+    Math.max(0, rect.right - mapWidth + edgeMargin) +
+    Math.max(0, edgeMargin - rect.top) +
+    Math.max(0, rect.bottom - mapHeight + edgeMargin);
+  const labelOverlap = occupiedRects.reduce(
+    (total, occupied) => total + routeLabelOverlapArea(rect, occupied),
+    0
+  );
+  const obstacleOverlap = obstacleRects.reduce(
+    (total, obstacle) => total + routeLabelOverlapArea(rect, obstacle, 6),
+    0
+  );
+
+  return (
+    candidateOrder +
+    overflow * 10000 +
+    obstacleOverlap * 1000 +
+    labelOverlap * 100000
+  );
+}
+
+function createRouteLabelsOverlay(items) {
   const overlay = new google.maps.OverlayView();
-  let label = null;
+  const labels = [];
 
   overlay.onAdd = () => {
-    label = document.createElement("button");
-    label.type = "button";
-    label.className = `route-map-label${isSelected ? " is-selected" : ""}`;
-    label.setAttribute(
-      "aria-label",
-      `${duration}、${distance}のルートを選択`
-    );
+    const pane = overlay.getPanes().overlayMouseTarget;
+    items.forEach((item) => {
+      const label = document.createElement("button");
+      label.type = "button";
+      label.className =
+        `route-map-label${item.isSelected ? " is-selected" : ""}`;
+      label.setAttribute(
+        "aria-label",
+        `${item.duration}、${item.distance}のルートを選択`
+      );
 
-    const durationElement = document.createElement("strong");
-    durationElement.textContent = duration;
-    const distanceElement = document.createElement("span");
-    distanceElement.textContent = distance;
-    label.append(durationElement, distanceElement);
+      const durationElement = document.createElement("strong");
+      durationElement.textContent = item.duration;
+      const distanceElement = document.createElement("span");
+      distanceElement.textContent = item.distance;
+      label.append(durationElement, distanceElement);
 
-    label.addEventListener("pointerdown", (event) => event.stopPropagation());
-    label.addEventListener("click", (event) => {
-      event.stopPropagation();
-      onSelect();
+      label.addEventListener("pointerdown", (event) => event.stopPropagation());
+      label.addEventListener("click", (event) => {
+        event.stopPropagation();
+        item.onSelect();
+      });
+      pane.appendChild(label);
+      labels.push({ label, item });
     });
-    overlay.getPanes().overlayMouseTarget.appendChild(label);
   };
 
   overlay.draw = () => {
-    if (!label) return;
-    const point = overlay.getProjection().fromLatLngToDivPixel(position);
-    if (!point) return;
-    label.style.left = `${point.x}px`;
-    label.style.top = `${point.y}px`;
+    const projection = overlay.getProjection();
+    const mapRect = map.getDiv().getBoundingClientRect();
+    const obstacleRects = routeLabelObstacleRects(mapRect);
+    const occupiedRects = [];
+    const orderedLabels = labels
+      .slice()
+      .sort(
+        (first, second) =>
+          Number(second.item.isSelected) - Number(first.item.isSelected)
+      );
+
+    orderedLabels.forEach(({ label, item }) => {
+      const width = label.offsetWidth || 84;
+      const height = label.offsetHeight || 48;
+      let bestPlacement = null;
+
+      item.positions.forEach((position, candidateOrder) => {
+        const point = projection.fromLatLngToDivPixel(position);
+        if (!point) return;
+        const rect = routeLabelRect(point, width, height);
+        const score = routeLabelPlacementScore(
+          rect,
+          candidateOrder,
+          mapRect.width,
+          mapRect.height,
+          occupiedRects,
+          obstacleRects
+        );
+        if (!bestPlacement || score < bestPlacement.score) {
+          bestPlacement = { point, rect, score };
+        }
+      });
+
+      if (!bestPlacement) {
+        label.hidden = true;
+        return;
+      }
+
+      label.hidden = false;
+      label.style.left = `${bestPlacement.point.x}px`;
+      label.style.top = `${bestPlacement.point.y}px`;
+      occupiedRects.push(bestPlacement.rect);
+    });
   };
 
   overlay.onRemove = () => {
-    label?.remove();
-    label = null;
+    labels.forEach(({ label }) => label.remove());
+    labels.length = 0;
   };
 
   overlay.setMap(map);
@@ -1164,6 +1294,7 @@ function createRouteLabelOverlay({
 
 function drawRouteOverlays() {
   clearRouteOverlays();
+  const routeLabelItems = [];
 
   routeCandidates.forEach((candidate, index) => {
     const route = candidate.result.routes[candidate.routeIndex];
@@ -1226,26 +1357,24 @@ function drawRouteOverlays() {
       }
     });
 
-    const routePath = route.overview_path || [];
-    const labelFractions = [0.42, 0.5, 0.36];
-    const labelPosition = routePath[
-      Math.round((routePath.length - 1) * (labelFractions[index] || 0.5))
-    ];
+    const labelPositions = routeLabelCandidatePositions(route, index, isSelected);
 
-    if (labelPosition) {
+    if (labelPositions.length) {
       const totals = sumRouteTotals(route);
-      const routeLabelOverlay = createRouteLabelOverlay({
-        position: labelPosition,
+      routeLabelItems.push({
+        positions: labelPositions,
         duration: formatDuration(totals.totalDuration),
         distance: formatDistance(totals.totalDistance),
         isSelected,
         onSelect: selectRoute
       });
-
-      routeLabelOverlays.push(routeLabelOverlay);
     }
 
   });
+
+  if (routeLabelItems.length) {
+    routeLabelOverlays.push(createRouteLabelsOverlay(routeLabelItems));
+  }
 }
 
 
