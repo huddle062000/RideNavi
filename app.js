@@ -280,6 +280,48 @@
       : "施設情報: Google Maps";
   }
 
+  function formatPlaceApiError(error, placeId) {
+    const response = error?.response;
+    const responseContent = response
+      ? {
+          status: response.status,
+          statusText: response.statusText,
+          url: response.url,
+          data: response.data ?? response.body ?? response.error ?? null
+        }
+      : error?.responseBody ?? error?.data ?? error?.details ?? null;
+    const ownProperties = {};
+    for (const property of Object.getOwnPropertyNames(error || {})) {
+      try {
+        const value = error[property];
+        ownProperties[property] = value === error ? "[Circular: error]" : value;
+      } catch (_propertyError) {
+        ownProperties[property] = "[Unreadable property]";
+      }
+    }
+    const seen = new WeakSet();
+    return JSON.stringify(
+      {
+        placeId,
+        error: String(error),
+        message: error?.message ?? "",
+        code: error?.code ?? "",
+        status: error?.status ?? response?.status ?? "",
+        endpoint: error?.endpoint ?? "",
+        response: responseContent,
+        properties: ownProperties
+      },
+      (_key, value) => {
+        if (typeof value === "bigint") return String(value);
+        if (!value || typeof value !== "object") return value;
+        if (seen.has(value)) return "[Circular]";
+        seen.add(value);
+        return value;
+      },
+      2
+    );
+  }
+
   function formatPlaceClosingTime(openingHours, utcOffsetMinutes) {
     const periods = openingHours?.periods || [];
     if (!periods.length) return "";
@@ -384,10 +426,9 @@
         }
       } catch (error) {
         // 営業情報が取得できなくても、先に取得した施設名とカテゴリーは維持する。
-        console.error("[Ride Navi] POIの営業情報取得に失敗しました", {
-          placeId,
-          error
-        });
+        console.error(
+          `[Ride Navi] POIの営業情報取得に失敗しました\n${formatPlaceApiError(error, placeId)}`
+        );
       }
       setOptionalDestinationText(destinationBusinessInfo, openStatus);
       destinationBusinessInfo?.classList.toggle(
@@ -396,10 +437,9 @@
       );
     } catch (error) {
       // Places API が利用できない場合も、逆ジオコードの名称・住所を維持する。
-      console.error("[Ride Navi] POIの基本情報取得に失敗しました", {
-        placeId,
-        error
-      });
+      console.error(
+        `[Ride Navi] POIの基本情報取得に失敗しました\n${formatPlaceApiError(error, placeId)}`
+      );
     }
   }
 
