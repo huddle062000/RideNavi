@@ -489,12 +489,15 @@
     const lat = latLng.lat().toFixed(6);
     const lng = latLng.lng().toFixed(6);
     const coordinate = `${lat},${lng}`;
+    const displayCoordinate =
+      `${latLng.lat().toFixed(5)}, ${latLng.lng().toFixed(5)}`;
     cancelPendingRouteSearch();
     clearDisplayedRoute(false);
     destinationInput.value = coordinate;
     updateRouteEndpointsSummary();
     updateRouteInfoEmpty();
-    showDestinationPanel("選択した目的地", coordinate);
+    showDestinationPanel(displayCoordinate, coordinate);
+    setOptionalDestinationText(destinationCategory, "地点を選択");
 
     if (!destinationMarker) {
       destinationMarker = new google.maps.Marker({
@@ -506,6 +509,7 @@
     } else {
       destinationMarker.setPosition(latLng);
     }
+    destinationMarker.setTitle(displayCoordinate);
 
     if (selectedPlaceId) {
       void loadDestinationPlaceDetails(selectedPlaceId, selectionId);
@@ -521,19 +525,8 @@
         return;
       }
       const result = results[0];
-      const namedResult = results.find((candidate) =>
-        candidate.types?.some((type) =>
-          ["establishment", "point_of_interest", "premise", "natural_feature"].includes(type)
-        )
-      );
-      const placeName = namedResult?.address_components?.[0]?.long_name || "";
       const address = result.formatted_address || coordinate;
-      destinationName.textContent = placeName || address;
-      destinationAddress.textContent = placeName ? address : coordinate;
-      destinationMarker?.setTitle(placeName || address || "目的地");
-      if (namedResult?.place_id) {
-        void loadDestinationPlaceDetails(namedResult.place_id, selectionId);
-      }
+      destinationAddress.textContent = address;
     });
   }
 
