@@ -322,35 +322,75 @@
     );
   }
 
-  function formatPlaceClosingTime(openingHours, utcOffsetMinutes) {
+  function formatOpeningHoursPoint(point) {
+    if (!point) return "";
+    const hour = String(point.hour);
+    const minute = String(point.minute).padStart(2, "0");
+    return `${hour}:${minute}`;
+  }
+
+  function formatPlaceOpeningStatus(
+    openingHours,
+    utcOffsetMinutes,
+    now = Date.now()
+  ) {
     const periods = openingHours?.periods || [];
     if (!periods.length) return "";
-    if (periods.every((period) => !period.close)) return "24時間営業";
+    const alwaysOpen =
+      periods.length === 1 &&
+      periods[0].open?.day === 0 &&
+      periods[0].open?.hour === 0 &&
+      periods[0].open?.minute === 0 &&
+      !periods[0].close;
+    if (alwaysOpen) return "営業中・24時間営業";
 
     const offset = Number.isFinite(utcOffsetMinutes)
       ? utcOffsetMinutes
       : -new Date().getTimezoneOffset();
-    const placeTime = new Date(Date.now() + offset * 60000);
+    const placeTime = new Date(now + offset * 60000);
     const currentDay = placeTime.getUTCDay();
     const currentMinutes = placeTime.getUTCHours() * 60 + placeTime.getUTCMinutes();
-    const nextClose = periods
-      .map((period) => period.close)
-      .filter(Boolean)
-      .map((close) => {
-        const closeMinutes = close.hour * 60 + close.minute;
-        const dayOffset = (close.day - currentDay + 7) % 7;
-        return {
-          close,
-          minutesUntil: dayOffset * 1440 + closeMinutes - currentMinutes
-        };
-      })
-      .filter((candidate) => candidate.minutesUntil > 0)
-      .sort((a, b) => a.minutesUntil - b.minutesUntil)[0]?.close;
+    const currentWeekMinutes = currentDay * 1440 + currentMinutes;
+    const weekMinutes = 7 * 1440;
+    const normalizedPeriods = periods
+      .filter((period) => period.open && period.close)
+      .map((period) => {
+        const open =
+          period.open.day * 1440 + period.open.hour * 60 + period.open.minute;
+        let close =
+          period.close.day * 1440 + period.close.hour * 60 + period.close.minute;
+        if (close <= open) close += weekMinutes;
+        return { period, open, close };
+      });
+    const activePeriod = normalizedPeriods.find(({ open, close }) =>
+      [currentWeekMinutes, currentWeekMinutes + weekMinutes].some(
+        (current) => current >= open && current < close
+      )
+    );
 
-    if (!nextClose) return "";
-    const hour = String(nextClose.hour).padStart(2, "0");
-    const minute = String(nextClose.minute).padStart(2, "0");
-    return `${hour}:${minute}まで`;
+    if (activePeriod) {
+      if (activePeriod.close - activePeriod.open >= 1440) {
+        return "営業中・24時間営業";
+      }
+      return `営業中・${formatOpeningHoursPoint(activePeriod.period.close)}まで`;
+    }
+
+    const todayPeriods = normalizedPeriods.filter(
+      ({ period }) => period.open.day === currentDay
+    );
+    if (!todayPeriods.length) return "営業時間外";
+
+    const todaySchedule = todayPeriods
+      .map(({ period }) =>
+        `${formatOpeningHoursPoint(period.open)}〜${formatOpeningHoursPoint(period.close)}`
+      )
+      .join(" / ");
+    const allTodayPeriodsEnded = todayPeriods.every(({ period }) => {
+      if (period.close.day !== currentDay) return false;
+      return currentMinutes >= period.close.hour * 60 + period.close.minute;
+    });
+    const status = allTodayPeriodsEnded ? "営業終了" : "営業時間外";
+    return `${status}・本日${todaySchedule}`;
   }
 
   async function loadDestinationPlaceDetails(placeId, selectionId) {
@@ -409,20 +449,12 @@
             ]
           });
           if (selectionId !== destinationSelectionId) return;
-          const isOpen = await place.isOpen();
-          if (selectionId !== destinationSelectionId) return;
-          if (typeof isOpen === "boolean") {
-            openStatus = isOpen ? "営業中" : "営業時間外";
-            if (isOpen) {
-              const openingHours =
-                place.currentOpeningHours || place.regularOpeningHours;
-              const closingTime = formatPlaceClosingTime(
-                openingHours,
-                place.utcOffsetMinutes
-              );
-              if (closingTime) openStatus += ` ・ ${closingTime}`;
-            }
-          }
+          const openingHours =
+            place.currentOpeningHours || place.regularOpeningHours;
+          openStatus = formatPlaceOpeningStatus(
+            openingHours,
+            place.utcOffsetMinutes
+          );
         }
       } catch (error) {
         // 営業情報が取得できなくても、先に取得した施設名とカテゴリーは維持する。
