@@ -128,11 +128,8 @@
   const destinationPanel = $("destinationPanel");
   const destinationName = $("destinationName");
   const destinationAddress = $("destinationAddress");
-  const destinationRating = $("destinationRating");
-  const destinationOpenStatus = $("destinationOpenStatus");
-  const destinationHours = $("destinationHours");
-  const destinationPhone = $("destinationPhone");
-  const destinationAccessibility = $("destinationAccessibility");
+  const destinationCategory = $("destinationCategory");
+  const destinationBusinessInfo = $("destinationBusinessInfo");
   const destinationAttribution = $("destinationAttribution");
   const destinationNavigationButton = $("destinationNavigationButton");
   const destinationShareButton = $("destinationShareButton");
@@ -263,13 +260,9 @@
   }
 
   function resetDestinationPlaceDetails() {
-    setOptionalDestinationText(destinationRating, "");
-    setOptionalDestinationText(destinationOpenStatus, "");
-    destinationOpenStatus?.classList.remove("is-closed");
-    setOptionalDestinationText(destinationHours, "");
-    if (destinationHours) destinationHours.removeAttribute("title");
-    setOptionalDestinationText(destinationPhone, "");
-    setOptionalDestinationText(destinationAccessibility, "");
+    setOptionalDestinationText(destinationCategory, "");
+    setOptionalDestinationText(destinationBusinessInfo, "");
+    destinationBusinessInfo?.classList.remove("is-closed");
     setOptionalDestinationText(destinationAttribution, "");
   }
 
@@ -287,17 +280,35 @@
       : "施設情報: Google Maps";
   }
 
-  function formatAccessibilityOptions(options) {
-    if (!options) return "";
-    const available = [
-      ["hasWheelchairAccessibleEntrance", "車いす対応の入口"],
-      ["hasWheelchairAccessibleParking", "車いす対応駐車場"],
-      ["hasWheelchairAccessibleRestroom", "車いす対応トイレ"],
-      ["hasWheelchairAccessibleSeating", "車いす対応席"]
-    ]
-      .filter(([key]) => options[key] === true)
-      .map(([, label]) => label);
-    return available.join("・");
+  function formatPlaceClosingTime(openingHours, utcOffsetMinutes) {
+    const periods = openingHours?.periods || [];
+    if (!periods.length) return "";
+    if (periods.every((period) => !period.close)) return "24時間営業";
+
+    const offset = Number.isFinite(utcOffsetMinutes)
+      ? utcOffsetMinutes
+      : -new Date().getTimezoneOffset();
+    const placeTime = new Date(Date.now() + offset * 60000);
+    const currentDay = placeTime.getUTCDay();
+    const currentMinutes = placeTime.getUTCHours() * 60 + placeTime.getUTCMinutes();
+    const nextClose = periods
+      .map((period) => period.close)
+      .filter(Boolean)
+      .map((close) => {
+        const closeMinutes = close.hour * 60 + close.minute;
+        const dayOffset = (close.day - currentDay + 7) % 7;
+        return {
+          close,
+          minutesUntil: dayOffset * 1440 + closeMinutes - currentMinutes
+        };
+      })
+      .filter((candidate) => candidate.minutesUntil > 0)
+      .sort((a, b) => a.minutesUntil - b.minutesUntil)[0]?.close;
+
+    if (!nextClose) return "";
+    const hour = String(nextClose.hour).padStart(2, "0");
+    const minute = String(nextClose.minute).padStart(2, "0");
+    return `${hour}:${minute}まで`;
   }
 
   async function loadDestinationPlaceDetails(placeId, selectionId) {
@@ -314,13 +325,11 @@
         fields: [
           "displayName",
           "formattedAddress",
-          "rating",
+          "primaryTypeDisplayName",
           "businessStatus",
           "currentOpeningHours",
           "regularOpeningHours",
-          "utcOffsetMinutes",
-          "nationalPhoneNumber",
-          "accessibilityOptions"
+          "utcOffsetMinutes"
         ]
       });
       if (selectionId !== destinationSelectionId) return;
@@ -330,9 +339,11 @@
       if (place.formattedAddress) destinationAddress.textContent = place.formattedAddress;
       destinationMarker?.setTitle(displayName || place.formattedAddress || "目的地");
 
+      const category =
+        place.primaryTypeDisplayName?.text || place.primaryTypeDisplayName || "";
       setOptionalDestinationText(
-        destinationRating,
-        Number.isFinite(place.rating) ? `★ ${place.rating.toFixed(1)}` : ""
+        destinationCategory,
+        category
       );
 
       let openStatus = "";
@@ -340,42 +351,32 @@
         openStatus = "閉業";
       } else if (place.businessStatus === "CLOSED_TEMPORARILY") {
         openStatus = "臨時休業";
+      } else if (place.businessStatus === "FUTURE_OPENING") {
+        openStatus = "開業前";
       } else {
         try {
           const isOpen = await place.isOpen();
           if (selectionId !== destinationSelectionId) return;
           if (typeof isOpen === "boolean") {
             openStatus = isOpen ? "営業中" : "営業時間外";
+            if (isOpen) {
+              const openingHours =
+                place.currentOpeningHours || place.regularOpeningHours;
+              const closingTime = formatPlaceClosingTime(
+                openingHours,
+                place.utcOffsetMinutes
+              );
+              if (closingTime) openStatus += ` ・ ${closingTime}`;
+            }
           }
         } catch (_error) {
           // 営業状態が取得できない場合は、項目自体を表示しない。
         }
       }
-      setOptionalDestinationText(destinationOpenStatus, openStatus);
-      destinationOpenStatus?.classList.toggle(
+      setOptionalDestinationText(destinationBusinessInfo, openStatus);
+      destinationBusinessInfo?.classList.toggle(
         "is-closed",
-        Boolean(openStatus && openStatus !== "営業中")
-      );
-
-      const openingHours =
-        place.currentOpeningHours?.weekdayDescriptions ||
-        place.regularOpeningHours?.weekdayDescriptions ||
-        [];
-      setOptionalDestinationText(
-        destinationHours,
-        openingHours.length ? `営業時間: ${openingHours.join(" / ")}` : ""
-      );
-      if (destinationHours && openingHours.length) {
-        destinationHours.title = openingHours.join("\n");
-      }
-      setOptionalDestinationText(
-        destinationPhone,
-        place.nationalPhoneNumber ? `電話: ${place.nationalPhoneNumber}` : ""
-      );
-      const accessibility = formatAccessibilityOptions(place.accessibilityOptions);
-      setOptionalDestinationText(
-        destinationAccessibility,
-        accessibility ? `バリアフリー: ${accessibility}` : ""
+        Boolean(openStatus && !openStatus.startsWith("営業中"))
       );
       setOptionalDestinationText(
         destinationAttribution,
