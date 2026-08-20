@@ -200,6 +200,18 @@
     }
   }
 
+  function hideStatus() {
+    if (!statusEl) return;
+
+    if (statusTimer) {
+      clearTimeout(statusTimer);
+      statusTimer = null;
+    }
+
+    statusEl.hidden = true;
+    statusEl.textContent = "";
+  }
+
   function hideRouteChoices() {
     if (routeChoicePanel) {
       routeChoicePanel.remove();
@@ -563,7 +575,7 @@
     resetDestinationPlaceDetails();
     destinationPanel.hidden = true;
     updateRouteEndpointsSummary();
-    showStatus("目的地を解除しました", true);
+    hideStatus();
   }
 
   function updateNavigationGuidance(point = getCurrentLatLng()) {
@@ -613,7 +625,7 @@
       ?.querySelectorAll(".map-select-button")
       .forEach((button) => button.setAttribute("aria-pressed", "false"));
 
-    if (showMessage) showStatus("MAP選択を解除しました", true);
+    if (showMessage) hideStatus();
   }
 
   function startMapSelection(input, label, button = null) {
@@ -1915,7 +1927,7 @@ function drawRouteOverlays() {
     drawRouteOverlays();
 
     if (announce) {
-      showStatus(`${routeModeLabel(candidate.mode)}を選びました`, true);
+      hideStatus();
     }
   }
 
@@ -1998,7 +2010,7 @@ function showRouteChoices(candidates, searchId) {
       row.remove();
       updateWaypointDisplay();
       updateRouteInfoEmpty();
-      showStatus("経由地を削除しました", true);
+      hideStatus();
     });
 
     input.addEventListener("keydown", (event) => {
@@ -2013,7 +2025,7 @@ function showRouteChoices(candidates, searchId) {
     updateWaypointDisplay();
     updateRouteInfoEmpty();
     input.focus();
-    showStatus("経由地を追加しました", true);
+    hideStatus();
   }
 
   function getWaypointValues() {
@@ -2032,7 +2044,7 @@ function showRouteChoices(candidates, searchId) {
   function clearDisplayedRoute(showMessage = true) {
     if (navigationActive) {
       stopNavigation(true);
-      if (showMessage) showStatus("ルートを消去しました", true);
+      if (showMessage) hideStatus();
       return;
     }
     lastRouteResult = null;
@@ -2058,7 +2070,7 @@ function showRouteChoices(candidates, searchId) {
     updateRouteInfoEmpty();
 
     if (showMessage) {
-      showStatus("ルートを消去しました", true);
+      hideStatus();
     }
   
  }
@@ -2241,7 +2253,7 @@ function showRouteChoices(candidates, searchId) {
 
     originInput.value = "現在地";
     updateRouteEndpointsSummary();
-    showStatus("現在地を出発地にしました", true);
+    hideStatus();
   }
 
   function centerOnCurrentLocation() {
@@ -2265,12 +2277,7 @@ followToggle.checked = true;
 
     trafficLayer.setMap(trafficToggle.checked ? map : null);
 
-    showStatus(
-      trafficToggle.checked
-        ? "渋滞情報を表示しました"
-        : "渋滞情報を隠しました",
-      true
-    );
+    hideStatus();
   }
 
   function voiceTest() {
@@ -2287,7 +2294,7 @@ followToggle.checked = true;
 
     speech.lang = "ja-JP";
     speechSynthesis.speak(speech);
-    showStatus("音声テストを再生しました", true);
+    hideStatus();
   }
 
   function sumRouteTotals(route) {
@@ -2674,7 +2681,7 @@ followToggle.checked = true;
         `時間：${formatDuration(totals.totalDuration)}<br>` +
         `残り経由地：${remainingWaypoints.length}か所`;
 
-      showStatus("新しいルートに切り替えました", true);
+      hideStatus();
       speakNavigation("新しいルートに切り替えました。");
     });
   }
@@ -2751,10 +2758,11 @@ followToggle.checked = true;
     updateNavigationGuidance(point);
 
     const firstInstruction = navigationSteps[0]?.instruction;
-    showStatus(
-      firstInstruction ? `ナビ開始：${firstInstruction}` : "ナビを開始しました",
-      true
-    );
+    if (firstInstruction) {
+      showStatus(`ナビ開始：${firstInstruction}`, true);
+    } else {
+      hideStatus();
+    }
     speakNavigation(
       firstInstruction
         ? `ナビを開始します。最初の案内は、${firstInstruction}`
@@ -2775,7 +2783,7 @@ followToggle.checked = true;
 
     clearDisplayedRoute(false);
 
-    showStatus("ナビを終了しました", true);
+    hideStatus();
     if (speak) speakNavigation("ナビを終了しました。");
   }
 
@@ -2847,13 +2855,13 @@ followToggle.checked = true;
           text: "Ride Naviで作成したツーリングルートです。",
           url: shareUrl
         });
-        showStatus("共有画面を開きました", true);
+        hideStatus();
         return;
       }
 
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(shareUrl);
-        showStatus("ルートURLをコピーしました", true);
+        hideStatus();
         return;
       }
 
@@ -2884,7 +2892,7 @@ followToggle.checked = true;
     updateWaypointDisplay();
     updateRouteInfoEmpty();
     openPanel();
-    showStatus("共有されたルートを読み込みました", true);
+    hideStatus();
     return true;
   }
 
@@ -3079,10 +3087,7 @@ followToggle.checked = true;
         diagnostics.finalAcceptedCount = cachedCandidates.length;
         showRouteChoices(cachedCandidates, searchId);
         closePanel();
-        showStatus(
-          `${cachedCandidates.length}件のルート候補が見つかりました`,
-          true
-        );
+        hideStatus();
         return;
       }
 
@@ -3473,7 +3478,7 @@ followToggle.checked = true;
       cacheRouteCandidates(cacheKey, reasonableCandidates);
       showRouteChoices(reasonableCandidates, searchId);
       closePanel();
-      showStatus(`${reasonableCandidates.length}件のルート候補が見つかりました`, true);
+      hideStatus();
     } catch (error) {
       if (searchId !== latestRouteSearchId) return;
 
@@ -3715,16 +3720,16 @@ followToggle.checked = true;
 
         if (Number.isFinite(lastKnownHeading)) {
           map.setHeading(lastKnownHeading);
-          showStatus("進行方向を上に表示します", true);
+          hideStatus();
         } else {
-          showStatus("移動すると進行方向を上に表示します", true);
+          hideStatus();
         }
       } else {
         headingButton.classList.remove("active");
         headingButton.title = "進行方向を上に表示";
         headingButton.setAttribute("aria-label", "進行方向を上に表示");
         map.setHeading(0);
-        showStatus("北を上に固定しました", true);
+        hideStatus();
       }
       updateLocationMarkerHeading();
     });
@@ -3831,7 +3836,7 @@ followToggle.checked = true;
       if (!followToggle) return;
 
       followToggle.checked = false;
-      showStatus("地図の自動追従を解除しました", true);
+      hideStatus();
     });
     map.addListener("dragend", () => {
       if (!navigationActive || navigationOverviewActive || !returnToLocationButton) {
@@ -3874,7 +3879,7 @@ followToggle.checked = true;
           if (!event.latLng || navigationActive) return;
           cancelMapSelection();
           updateDestinationDetails(event.latLng, selectedPlaceId);
-          showStatus("目的地を設定しました", true);
+          hideStatus();
           return;
         }
 
@@ -3892,7 +3897,7 @@ followToggle.checked = true;
         updateRouteEndpointsSummary();
         updateRouteInfoEmpty();
         cancelMapSelection();
-        showStatus(`📍 ${label}を設定しました`, true);
+        hideStatus();
       });
 
       map.addListener("mousedown", (event) => {
@@ -3944,7 +3949,7 @@ followToggle.checked = true;
           longPressPointerType = null;
           longPressCompleted = true;
           updateDestinationDetails(destinationLatLng);
-          showStatus("目的地を設定しました", true);
+          hideStatus();
         }, LONG_PRESS_DELAY_MS);
       });
       map.addListener("mouseup", () => {
