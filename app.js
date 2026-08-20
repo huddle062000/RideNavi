@@ -177,7 +177,7 @@
   let routeCandidates = [];
   let selectedRouteMode = "local";
   let routePolylines = [];
-  let routeNumberMarkers = [];
+  let routeLabelOverlays = [];
   let longPressTimer = null;
   let navigationOverviewActive = false;
   const routeSearchCache = new Map();
@@ -223,8 +223,8 @@
   function clearRouteOverlays() {
     routePolylines.forEach((polyline) => polyline.setMap(null));
     routePolylines = [];
-    routeNumberMarkers.forEach((marker) => marker.setMap(null));
-    routeNumberMarkers = [];
+    routeLabelOverlays.forEach((overlay) => overlay.setMap(null));
+    routeLabelOverlays = [];
   }
 
   function updateRouteEndpointsSummary() {
@@ -1112,6 +1112,56 @@
     return segments;
   }
 
+function createRouteLabelOverlay({
+  position,
+  duration,
+  distance,
+  isSelected,
+  onSelect
+}) {
+  const overlay = new google.maps.OverlayView();
+  let label = null;
+
+  overlay.onAdd = () => {
+    label = document.createElement("button");
+    label.type = "button";
+    label.className = `route-map-label${isSelected ? " is-selected" : ""}`;
+    label.setAttribute(
+      "aria-label",
+      `${duration}、${distance}のルートを選択`
+    );
+
+    const durationElement = document.createElement("strong");
+    durationElement.textContent = duration;
+    const distanceElement = document.createElement("span");
+    distanceElement.textContent = distance;
+    label.append(durationElement, distanceElement);
+
+    label.addEventListener("pointerdown", (event) => event.stopPropagation());
+    label.addEventListener("click", (event) => {
+      event.stopPropagation();
+      onSelect();
+    });
+    overlay.getPanes().overlayMouseTarget.appendChild(label);
+  };
+
+  overlay.draw = () => {
+    if (!label) return;
+    const point = overlay.getProjection().fromLatLngToDivPixel(position);
+    if (!point) return;
+    label.style.left = `${point.x}px`;
+    label.style.top = `${point.y}px`;
+  };
+
+  overlay.onRemove = () => {
+    label?.remove();
+    label = null;
+  };
+
+  overlay.setMap(map);
+  return overlay;
+}
+
 function drawRouteOverlays() {
   clearRouteOverlays();
 
@@ -1183,32 +1233,16 @@ function drawRouteOverlays() {
     ];
 
     if (labelPosition) {
-      const routeNumberMarker = new google.maps.Marker({
-        map,
+      const totals = sumRouteTotals(route);
+      const routeLabelOverlay = createRouteLabelOverlay({
         position: labelPosition,
-        label: {
-          text: String(index + 1),
-          color: "#ffffff",
-          fontSize: "15px",
-          fontWeight: "700"
-        },
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 15,
-          fillColor: routeColor,
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeOpacity: 1,
-          strokeWeight: 2
-        },
-        title: `ルート${routeCandidateNumber(index)}`,
-        zIndex: isSelected ? 270 : 260 + index,
-        optimized: false,
-        clickable: true
+        duration: formatDuration(totals.totalDuration),
+        distance: formatDistance(totals.totalDistance),
+        isSelected,
+        onSelect: selectRoute
       });
 
-      routeNumberMarker.addListener("click", selectRoute);
-      routeNumberMarkers.push(routeNumberMarker);
+      routeLabelOverlays.push(routeLabelOverlay);
     }
 
   });
