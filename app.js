@@ -119,8 +119,7 @@
   let headingButton = null;
   let lastKnownHeading = null;
   let previousGpsPoint = null;
-  let bikeMarkerImage = null;
-  const bikeMarkerIconCache = new Map();
+  const navigationArrowIconCache = new Map();
   let navigationInfoPanel = $("rideNaviInfoPanel");
   let navigationDistanceValue = $("navigationDistanceValue");
   let navigationEtaValue = $("navigationEtaValue");
@@ -2072,35 +2071,53 @@ function showRouteChoices(candidates, searchId) {
     return (toDegrees(Math.atan2(y, x)) + 360) % 360;
   }
 
-  function createBikeMarkerIcon(heading = 0) {
-    if (!bikeMarkerImage?.complete || !bikeMarkerImage.naturalWidth) return null;
-
-    const roundedHeading = Math.round(heading / 5) * 5 % 360;
-    if (bikeMarkerIconCache.has(roundedHeading)) {
-      return bikeMarkerIconCache.get(roundedHeading);
+  function createNavigationArrowIcon(heading = 0) {
+    const normalizedHeading = ((heading % 360) + 360) % 360;
+    const roundedHeading = Math.round(normalizedHeading / 5) * 5 % 360;
+    const displaySize = 48;
+    const pixelRatio = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
+    const cacheKey = `${roundedHeading}-${pixelRatio}`;
+    if (navigationArrowIconCache.has(cacheKey)) {
+      return navigationArrowIconCache.get(cacheKey);
     }
 
-    const size = 88;
     const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
+    canvas.width = displaySize * pixelRatio;
+    canvas.height = displaySize * pixelRatio;
     const context = canvas.getContext("2d");
-    context.translate(size / 2, size / 2);
+    if (!context) return null;
+    context.scale(pixelRatio, pixelRatio);
+    context.translate(displaySize / 2, displaySize / 2);
     context.rotate(roundedHeading * Math.PI / 180);
-    context.drawImage(bikeMarkerImage, -size / 2, -size / 2, size, size);
+    context.translate(-displaySize / 2, -displaySize / 2);
+    context.beginPath();
+    context.moveTo(24, 5);
+    context.lineTo(40, 39);
+    context.lineTo(24, 33);
+    context.lineTo(8, 39);
+    context.closePath();
+    context.fillStyle = "#1a73e8";
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 3.5;
+    context.lineJoin = "round";
+    context.shadowColor = "rgba(0, 0, 0, 0.32)";
+    context.shadowBlur = 4;
+    context.shadowOffsetY = 2;
+    context.fill();
+    context.stroke();
 
     const icon = {
       url: canvas.toDataURL("image/png"),
-      scaledSize: new google.maps.Size(size, size),
-      anchor: new google.maps.Point(size / 2, size / 2)
+      scaledSize: new google.maps.Size(displaySize, displaySize),
+      anchor: new google.maps.Point(displaySize / 2, displaySize / 2)
     };
-    bikeMarkerIconCache.set(roundedHeading, icon);
+    navigationArrowIconCache.set(cacheKey, icon);
     return icon;
   }
 
-  function updateBikeMarkerHeading() {
+  function updateLocationMarkerHeading() {
     if (!userMarker) return;
-    const icon = createBikeMarkerIcon(
+    const icon = createNavigationArrowIcon(
       headingUpEnabled ? 0 : (lastKnownHeading || 0)
     );
     if (icon) userMarker.setIcon(icon);
@@ -2154,7 +2171,7 @@ function showRouteChoices(candidates, searchId) {
       map.panTo(point);
     }
 
-    updateBikeMarkerHeading();
+    updateLocationMarkerHeading();
 
     if (headingUpEnabled && Number.isFinite(lastKnownHeading)) {
       map.setHeading(lastKnownHeading);
@@ -2716,7 +2733,7 @@ followToggle.checked = true;
       headingButton.title = "北を上に固定";
       headingButton.setAttribute("aria-label", "北を上に固定");
     }
-    updateBikeMarkerHeading();
+    updateLocationMarkerHeading();
     closePanel();
     updateNavigationGuidance(point);
 
@@ -3695,7 +3712,7 @@ followToggle.checked = true;
         map.setHeading(0);
         showStatus("北を上に固定しました", true);
       }
-      updateBikeMarkerHeading();
+      updateLocationMarkerHeading();
     });
 
     controls.append(headingButton);
@@ -3926,9 +3943,6 @@ followToggle.checked = true;
       map.addListener("contextmenu", cancelLongPress);
 
       trafficLayer = new google.maps.TrafficLayer();
-      bikeMarkerImage = new Image();
-      bikeMarkerImage.onload = updateBikeMarkerHeading;
-      bikeMarkerImage.src = "icons/ridenavi-bike-marker-v2.png";
       createNavigationInfoPanel();
       createHeadingButton();
 
