@@ -311,6 +311,28 @@
     return `${hour}:${minute}まで`;
   }
 
+  function formatGeocoderPlaceCategory(types = []) {
+    const categoryByType = {
+      hospital: "病院",
+      health: "医療施設",
+      pharmacy: "薬局",
+      shopping_mall: "ショッピングモール",
+      supermarket: "スーパーマーケット",
+      convenience_store: "コンビニエンスストア",
+      restaurant: "レストラン",
+      cafe: "カフェ",
+      gas_station: "ガソリンスタンド",
+      parking: "駐車場",
+      lodging: "宿泊施設",
+      tourist_attraction: "観光スポット",
+      park: "公園",
+      school: "学校",
+      store: "店舗"
+    };
+    const matchedType = types.find((type) => categoryByType[type]);
+    return matchedType ? categoryByType[matchedType] : "";
+  }
+
   async function loadDestinationPlaceDetails(placeId, selectionId) {
     if (!placeId || !google.maps.importLibrary) return;
 
@@ -325,11 +347,7 @@
         fields: [
           "displayName",
           "formattedAddress",
-          "primaryTypeDisplayName",
-          "businessStatus",
-          "currentOpeningHours",
-          "regularOpeningHours",
-          "utcOffsetMinutes"
+          "primaryTypeDisplayName"
         ]
       });
       if (selectionId !== destinationSelectionId) return;
@@ -345,16 +363,33 @@
         destinationCategory,
         category
       );
+      setOptionalDestinationText(
+        destinationAttribution,
+        formatDestinationAttribution(place.attributions)
+      );
 
       let openStatus = "";
-      if (place.businessStatus === "CLOSED_PERMANENTLY") {
-        openStatus = "閉業";
-      } else if (place.businessStatus === "CLOSED_TEMPORARILY") {
-        openStatus = "臨時休業";
-      } else if (place.businessStatus === "FUTURE_OPENING") {
-        openStatus = "開業前";
-      } else {
-        try {
+      try {
+        await place.fetchFields({
+          fields: ["businessStatus"]
+        });
+        if (selectionId !== destinationSelectionId) return;
+
+        if (place.businessStatus === "CLOSED_PERMANENTLY") {
+          openStatus = "閉業";
+        } else if (place.businessStatus === "CLOSED_TEMPORARILY") {
+          openStatus = "臨時休業";
+        } else if (place.businessStatus === "FUTURE_OPENING") {
+          openStatus = "開業前";
+        } else {
+          await place.fetchFields({
+            fields: [
+              "currentOpeningHours",
+              "regularOpeningHours",
+              "utcOffsetMinutes"
+            ]
+          });
+          if (selectionId !== destinationSelectionId) return;
           const isOpen = await place.isOpen();
           if (selectionId !== destinationSelectionId) return;
           if (typeof isOpen === "boolean") {
@@ -369,18 +404,14 @@
               if (closingTime) openStatus += ` ・ ${closingTime}`;
             }
           }
-        } catch (_error) {
-          // 営業状態が取得できない場合は、項目自体を表示しない。
         }
+      } catch (_error) {
+        // 営業情報が取得できなくても、先に取得した施設名とカテゴリーは維持する。
       }
       setOptionalDestinationText(destinationBusinessInfo, openStatus);
       destinationBusinessInfo?.classList.toggle(
         "is-closed",
         Boolean(openStatus && !openStatus.startsWith("営業中"))
-      );
-      setOptionalDestinationText(
-        destinationAttribution,
-        formatDestinationAttribution(place.attributions)
       );
     } catch (_error) {
       // Places API が利用できない場合も、逆ジオコードの名称・住所を維持する。
@@ -424,7 +455,10 @@
       void loadDestinationPlaceDetails(selectedPlaceId, selectionId);
     }
 
-    geocoder?.geocode({ location: latLng }, (results, status) => {
+    const geocodeRequest = selectedPlaceId
+      ? { placeId: selectedPlaceId }
+      : { location: latLng };
+    geocoder?.geocode(geocodeRequest, (results, status) => {
       if (
         selectionId !== destinationSelectionId ||
         status !== "OK" ||
@@ -433,9 +467,7 @@
         return;
       }
       const result = results[0];
-      const exactPlaceResult = selectedPlaceId
-        ? results.find((candidate) => candidate.place_id === selectedPlaceId)
-        : null;
+      const exactPlaceResult = selectedPlaceId ? result : null;
       const namedResult = exactPlaceResult ||
         results.find((candidate) =>
           candidate.types?.some((type) =>
@@ -450,6 +482,12 @@
         destinationName.textContent = placeName || address;
         destinationAddress.textContent = placeName ? address : coordinate;
         destinationMarker?.setTitle(placeName || address || "目的地");
+      }
+      if (selectedPlaceId && destinationCategory?.hidden) {
+        setOptionalDestinationText(
+          destinationCategory,
+          formatGeocoderPlaceCategory(exactPlaceResult?.types)
+        );
       }
       if (!selectedPlaceId && namedResult?.place_id) {
         void loadDestinationPlaceDetails(namedResult.place_id, selectionId);
