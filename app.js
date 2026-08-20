@@ -9,8 +9,8 @@
   const AUTO_ROUTE_OFFSET_RATIO = 0.08;
   const AUTO_ROUTE_MAX_DURATION_RATIO = 1.3;
   const ROUTE_SEARCH_CACHE_LIMIT = 12;
-  const LONG_PRESS_DELAY_MS = 700;
-  const LONG_PRESS_MOVE_TOLERANCE_PX = 12;
+  const LONG_PRESS_DELAY_MS = 550;
+  const LONG_PRESS_MOVE_TOLERANCE_PX = 24;
   const HIGHWAY_GUIDANCE_PATTERNS = {
     entry: [
       /(?:高速|自動車道|有料道路|都市高速).*(?:入る|進入|合流)/,
