@@ -457,10 +457,30 @@
   }
 
   function autocompleteRequestLocation() {
-    const point = getCurrentLatLng();
-    if (point) return point;
     const center = map?.getCenter();
-    return center ? { lat: center.lat(), lng: center.lng() } : DEFAULT_CENTER;
+    if (center) return { lat: center.lat(), lng: center.lng() };
+    return getCurrentLatLng() || DEFAULT_CENTER;
+  }
+
+  function destinationSearchLocationBias() {
+    const bounds = map?.getBounds?.();
+    if (bounds) {
+      const northEast = bounds.getNorthEast();
+      const southWest = bounds.getSouthWest();
+      if (northEast && southWest) {
+        return {
+          north: northEast.lat(),
+          east: northEast.lng(),
+          south: southWest.lat(),
+          west: southWest.lng()
+        };
+      }
+    }
+
+    return {
+      center: autocompleteRequestLocation(),
+      radius: AUTOCOMPLETE_LOCATION_BIAS_METERS
+    };
   }
 
   async function requestDestinationSuggestions(query, requestId) {
@@ -471,19 +491,16 @@
       if (!autocompleteSessionToken) {
         autocompleteSessionToken = new AutocompleteSessionToken();
       }
-      const location = autocompleteRequestLocation();
+      const currentLocation = getCurrentLatLng();
       const request = {
         input: query,
         language: "ja",
         region: "jp",
         includedRegionCodes: ["jp"],
         sessionToken: autocompleteSessionToken,
-        locationBias: {
-          center: location,
-          radius: AUTOCOMPLETE_LOCATION_BIAS_METERS
-        }
+        locationBias: destinationSearchLocationBias()
       };
-      if (currentPosition) request.origin = location;
+      if (currentLocation) request.origin = currentLocation;
 
       const { suggestions } =
         await AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
@@ -667,7 +684,7 @@
         ],
         language: "ja",
         region: "jp",
-        locationBias: location,
+        locationBias: destinationSearchLocationBias(),
         maxResultCount: TEXT_SEARCH_MAX_RESULTS
       });
       if (
