@@ -123,6 +123,10 @@
   let headingButton = null;
   let lastKnownHeading = null;
   let previousGpsPoint = null;
+  let previousGpsTimestamp = null;
+  let displayedNavigationPoint = null;
+  let displayedNavigationHeading = null;
+  let navigationVisualFrame = null;
   const navigationArrowIconCache = new Map();
   let navigationInfoPanel = $("rideNaviInfoPanel");
   let navigationDistanceValue = $("navigationDistanceValue");
@@ -162,6 +166,13 @@
   const NAVIGATION_START_HEADING_DELAY_MS = 1500;
   const NAVIGATION_START_FOLLOW_DELAY_MS = 1750;
   const NAVIGATION_VEHICLE_SCREEN_Y_RATIO = 0.76;
+  const NAVIGATION_POSITION_ANIMATION_MS = 550;
+  const NAVIGATION_LARGE_JUMP_ANIMATION_MS = 280;
+  const NAVIGATION_LARGE_JUMP_METERS = 80;
+  const NAVIGATION_STOPPED_SPEED_MPS = 0.8;
+  const NAVIGATION_LOW_SPEED_MPS = 2.2;
+  const NAVIGATION_HEADING_JITTER_DEGREES = 2.5;
+  const NAVIGATION_LOW_SPEED_HEADING_JITTER_DEGREES = 12;
   const clearRouteButton = $("clearRouteButton");
   const locationButton = $("locationButton");
   const floatingLocationButton = $("floatingLocationButton");
@@ -2672,6 +2683,44 @@ function showRouteChoices(candidates, searchId) {
     return (toDegrees(Math.atan2(y, x)) + 360) % 360;
   }
 
+  function normalizeHeading(heading) {
+    return ((heading % 360) + 360) % 360;
+  }
+
+  function shortestHeadingDelta(fromHeading, toHeading) {
+    return (
+      (normalizeHeading(toHeading) - normalizeHeading(fromHeading) + 540) %
+      360
+    ) - 180;
+  }
+
+  function filteredNavigationHeading(candidateHeading, speed, movedMeters) {
+    if (!Number.isFinite(candidateHeading)) return lastKnownHeading;
+
+    const normalizedHeading = normalizeHeading(candidateHeading);
+    if (!Number.isFinite(lastKnownHeading)) return normalizedHeading;
+
+    if (
+      Number.isFinite(speed) &&
+      speed < NAVIGATION_STOPPED_SPEED_MPS &&
+      movedMeters < 2
+    ) {
+      return lastKnownHeading;
+    }
+
+    const headingDelta = Math.abs(
+      shortestHeadingDelta(lastKnownHeading, normalizedHeading)
+    );
+    const jitterThreshold =
+      Number.isFinite(speed) && speed < NAVIGATION_LOW_SPEED_MPS
+        ? NAVIGATION_LOW_SPEED_HEADING_JITTER_DEGREES
+        : NAVIGATION_HEADING_JITTER_DEGREES;
+
+    return headingDelta < jitterThreshold
+      ? lastKnownHeading
+      : normalizedHeading;
+  }
+
   function createNavigationArrowIcon(heading = 0) {
     const normalizedHeading = ((heading % 360) + 360) % 360;
     const roundedHeading = Math.round(normalizedHeading / 5) * 5 % 360;
@@ -2716,10 +2765,10 @@ function showRouteChoices(candidates, searchId) {
     return icon;
   }
 
-  function updateLocationMarkerHeading() {
+  function updateLocationMarkerHeading(heading = lastKnownHeading) {
     if (!userMarker) return;
     const icon = createNavigationArrowIcon(
-      headingUpEnabled ? 0 : (lastKnownHeading || 0)
+      headingUpEnabled ? 0 : (heading || 0)
     );
     if (icon) userMarker.setIcon(icon);
   }
@@ -2764,6 +2813,107 @@ function showRouteChoices(candidates, searchId) {
 
     map.panTo(point);
     map.panBy(0, -navigationCameraOffsetPixels());
+  }
+
+  function cancelNavigationVisualAnimation() {
+    if (navigationVisualFrame === null) return;
+    window.cancelAnimationFrame(navigationVisualFrame);
+    navigationVisualFrame = null;
+  }
+
+  function setNavigationCameraLocation(point) {
+    if (
+      !navigationActive ||
+      navigationOverviewActive ||
+      !followToggle?.checked
+    ) {
+      return;
+    }
+
+    const cameraCenter = navigationCameraCenter(point);
+    if (cameraCenter) {
+      map.setCenter(cameraCenter);
+      return;
+    }
+
+    map.setCenter(point);
+    map.panBy(0, -navigationCameraOffsetPixels());
+  }
+
+  function renderNavigationVisual(point, heading) {
+    displayedNavigationPoint = point;
+    if (Number.isFinite(heading)) {
+      displayedNavigationHeading = normalizeHeading(heading);
+    }
+
+    userMarker?.setPosition(point);
+    accuracyCircle?.setCenter(point);
+    updateLocationMarkerHeading(displayedNavigationHeading);
+
+    if (headingUpEnabled && Number.isFinite(displayedNavigationHeading)) {
+      map.setHeading(displayedNavigationHeading);
+    }
+    setNavigationCameraLocation(point);
+  }
+
+  function animateNavigationVisual(targetPoint, targetHeading) {
+    const startPoint = displayedNavigationPoint || targetPoint;
+    const startHeading = Number.isFinite(displayedNavigationHeading)
+      ? displayedNavigationHeading
+      : targetHeading;
+    const movedMeters = distanceBetweenMeters(startPoint, targetPoint);
+    const duration = movedMeters > NAVIGATION_LARGE_JUMP_METERS
+      ? NAVIGATION_LARGE_JUMP_ANIMATION_MS
+      : NAVIGATION_POSITION_ANIMATION_MS;
+
+    cancelNavigationVisualAnimation();
+
+    if (
+      typeof window.requestAnimationFrame !== "function" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      renderNavigationVisual(targetPoint, targetHeading);
+      return;
+    }
+
+    const longitudeDelta =
+      ((targetPoint.lng - startPoint.lng + 540) % 360) - 180;
+    const headingDelta =
+      Number.isFinite(startHeading) && Number.isFinite(targetHeading)
+        ? shortestHeadingDelta(startHeading, targetHeading)
+        : 0;
+    let startTime = null;
+
+    const step = (timestamp) => {
+      if (!navigationActive) {
+        navigationVisualFrame = null;
+        return;
+      }
+
+      if (startTime === null) startTime = timestamp;
+      const progress = Math.min(1, (timestamp - startTime) / duration);
+      const easedProgress = 1 - (1 - progress) ** 3;
+      const point = {
+        lat:
+          startPoint.lat +
+          (targetPoint.lat - startPoint.lat) * easedProgress,
+        lng: startPoint.lng + longitudeDelta * easedProgress
+      };
+      const heading = Number.isFinite(startHeading)
+        ? normalizeHeading(startHeading + headingDelta * easedProgress)
+        : targetHeading;
+
+      renderNavigationVisual(point, heading);
+
+      if (progress < 1) {
+        navigationVisualFrame = window.requestAnimationFrame(step);
+      } else {
+        renderNavigationVisual(targetPoint, targetHeading);
+        navigationVisualFrame = null;
+      }
+    };
+
+    navigationVisualFrame = window.requestAnimationFrame(step);
   }
 
   function cancelNavigationStartMapAnimation() {
@@ -2923,19 +3073,40 @@ function showRouteChoices(candidates, searchId) {
 
     const point = getCurrentLatLng();
     const accuracy = Math.round(position.coords.accuracy || 0);
+    const movedMeters = previousGpsPoint
+      ? distanceBetweenMeters(previousGpsPoint, point)
+      : 0;
+    const elapsedSeconds =
+      Number.isFinite(previousGpsTimestamp) &&
+      Number.isFinite(position.timestamp) &&
+      position.timestamp > previousGpsTimestamp
+        ? (position.timestamp - previousGpsTimestamp) / 1000
+        : null;
+    const speed =
+      Number.isFinite(position.coords.speed) && position.coords.speed >= 0
+        ? position.coords.speed
+        : Number.isFinite(elapsedSeconds) && elapsedSeconds > 0
+          ? movedMeters / elapsedSeconds
+          : null;
+    let candidateHeading = null;
 
     if (
       Number.isFinite(position.coords.heading) &&
       position.coords.heading >= 0
     ) {
-      lastKnownHeading = position.coords.heading;
-    } else if (
-      previousGpsPoint &&
-      distanceBetweenMeters(previousGpsPoint, point) >= 3
-    ) {
-      lastKnownHeading = bearingBetweenPoints(previousGpsPoint, point);
+      candidateHeading = position.coords.heading;
+    } else if (previousGpsPoint && movedMeters >= 3) {
+      candidateHeading = bearingBetweenPoints(previousGpsPoint, point);
+    }
+    if (Number.isFinite(candidateHeading)) {
+      lastKnownHeading = navigationActive
+        ? filteredNavigationHeading(candidateHeading, speed, movedMeters)
+        : normalizeHeading(candidateHeading);
     }
     previousGpsPoint = point;
+    previousGpsTimestamp = Number.isFinite(position.timestamp)
+      ? position.timestamp
+      : Date.now();
 
     if (!userMarker) {
       userMarker = new google.maps.Marker({
@@ -2956,22 +3127,25 @@ function showRouteChoices(candidates, searchId) {
         strokeOpacity: 0.35,
         strokeWeight: 1
       });
+      displayedNavigationPoint = point;
+      displayedNavigationHeading = lastKnownHeading;
+    }
+
+    accuracyCircle.setRadius(accuracy);
+
+    if (navigationActive) {
+      animateNavigationVisual(point, lastKnownHeading);
     } else {
+      cancelNavigationVisualAnimation();
+      displayedNavigationPoint = point;
+      displayedNavigationHeading = lastKnownHeading;
       userMarker.setPosition(point);
       accuracyCircle.setCenter(point);
-      accuracyCircle.setRadius(accuracy);
-    }
-
-    updateLocationMarkerHeading();
-
-    if (headingUpEnabled && Number.isFinite(lastKnownHeading)) {
-      map.setHeading(lastKnownHeading);
-    }
-
-    if (followToggle.checked) {
-      navigationActive
-        ? panToNavigationLocation(point)
-        : map.panTo(point);
+      updateLocationMarkerHeading();
+      if (headingUpEnabled && Number.isFinite(lastKnownHeading)) {
+        map.setHeading(lastKnownHeading);
+      }
+      if (followToggle.checked) map.panTo(point);
     }
 
     if (navigationActive) {
@@ -3505,6 +3679,8 @@ followToggle.checked = true;
     offRouteCount = 0;
     rerouteInProgress = false;
     navigationActive = true;
+    displayedNavigationPoint = point;
+    displayedNavigationHeading = lastKnownHeading;
     landscapeLocationTogglePrimed = false;
     headingUpEnabled = true;
     navigationButton.textContent = "■ ナビ終了";
@@ -3548,6 +3724,7 @@ followToggle.checked = true;
 
   function stopNavigation(speak = true) {
     cancelNavigationStartMapAnimation();
+    cancelNavigationVisualAnimation();
     navigationActive = false;
     landscapeLocationTogglePrimed = false;
     offRouteCount = 0;
@@ -3559,6 +3736,15 @@ followToggle.checked = true;
     if (returnToLocationButton) returnToLocationButton.hidden = true;
     $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
     syncFloatingLocationButton();
+
+    const point = getCurrentLatLng();
+    if (point) {
+      displayedNavigationPoint = point;
+      displayedNavigationHeading = lastKnownHeading;
+      userMarker?.setPosition(point);
+      accuracyCircle?.setCenter(point);
+      updateLocationMarkerHeading();
+    }
 
     clearDisplayedRoute(false);
 
@@ -4737,7 +4923,12 @@ followToggle.checked = true;
       map.addListener("drag", () => {
         if (!supportsPointerEvents || !longPressStartPoint) cancelLongPress();
       });
-      map.addListener("zoom_changed", cancelLongPress);
+      map.addListener("zoom_changed", () => {
+        cancelLongPress();
+        if (displayedNavigationPoint) {
+          setNavigationCameraLocation(displayedNavigationPoint);
+        }
+      });
       map.addListener("contextmenu", cancelLongPress);
 
       trafficLayer = new google.maps.TrafficLayer();
@@ -4881,5 +5072,6 @@ followToggle.checked = true;
   updateRouteInfoEmpty();
   loadRouteFromUrl();
   updateRouteEndpointsSummary();
+
   loadGoogleMaps();
 })();
