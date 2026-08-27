@@ -2,6 +2,7 @@
   "use strict";
 
   const DEFAULT_CENTER = { lat: 35.0116, lng: 135.7681 };
+  const MAP_MIN_ZOOM = 4;
   const MAX_WAYPOINTS = 5;
   const AUTO_ROUTE_FRACTIONS = [0.35, 0.5, 0.65];
   const AUTO_ROUTE_MIN_OFFSET_METERS = 1500;
@@ -5273,6 +5274,7 @@ followToggle.checked = true;
       map = new google.maps.Map($("map"), {
         center: DEFAULT_CENTER,
         zoom: 12,
+        minZoom: MAP_MIN_ZOOM,
         zoomControl: false,
         mapTypeControl: false,
         streetViewControl: false,
