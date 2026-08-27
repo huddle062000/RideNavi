@@ -12,6 +12,8 @@
   const LONG_PRESS_DELAY_MS = 550;
   const AUTOCOMPLETE_DEBOUNCE_MS = 250;
   const AUTOCOMPLETE_LOCATION_BIAS_METERS = 25000;
+  const AUTOCOMPLETE_LOCAL_MIN_RADIUS_METERS = 8000;
+  const AUTOCOMPLETE_DISPLAY_RESULTS = 8;
   const TEXT_SEARCH_MAX_RESULTS = 10;
   const DESTINATION_SELECTION_ZOOM = 16;
   const TOUCH_LONG_PRESS_MOVE_TOLERANCE_PX = 24;
@@ -483,6 +485,60 @@
     };
   }
 
+  function destinationAutocompleteLocationRestriction() {
+    const center = autocompleteRequestLocation();
+    const bounds = map?.getBounds?.();
+    const northEast = bounds?.getNorthEast?.();
+    const viewportRadius = northEast
+      ? distanceBetweenMeters(center, {
+          lat: northEast.lat(),
+          lng: northEast.lng()
+        })
+      : AUTOCOMPLETE_LOCATION_BIAS_METERS;
+
+    return {
+      center,
+      radius: Math.min(
+        AUTOCOMPLETE_LOCATION_BIAS_METERS,
+        Math.max(AUTOCOMPLETE_LOCAL_MIN_RADIUS_METERS, viewportRadius)
+      )
+    };
+  }
+
+  function rankedAutocompleteItems(suggestions, query) {
+    const seenPlaceIds = new Set();
+    return suggestions
+      .map((suggestion) => suggestion.placePrediction)
+      .filter(Boolean)
+      .filter((prediction) => {
+        const key = prediction.placeId || prediction.text?.text;
+        if (!key || seenPlaceIds.has(key)) return false;
+        seenPlaceIds.add(key);
+        return true;
+      })
+      .map((prediction, index) => {
+        const mainText =
+          prediction.mainText?.text || prediction.text?.text || "候補";
+        return {
+          kind: "autocomplete",
+          prediction,
+          mainText,
+          secondaryText: prediction.secondaryText?.text || "",
+          distanceMeters: prediction.distanceMeters,
+          category: "",
+          matchTier: textSearchMatchTier(query, mainText),
+          originalIndex: index
+        };
+      })
+      .sort((a, b) =>
+        a.matchTier - b.matchTier ||
+        (Number.isFinite(a.distanceMeters) ? a.distanceMeters : Infinity) -
+          (Number.isFinite(b.distanceMeters) ? b.distanceMeters : Infinity) ||
+        a.originalIndex - b.originalIndex
+      )
+      .slice(0, AUTOCOMPLETE_DISPLAY_RESULTS);
+  }
+
   async function requestDestinationSuggestions(query, requestId) {
     try {
       const { AutocompleteSessionToken, AutocompleteSuggestion } =
@@ -491,40 +547,41 @@
       if (!autocompleteSessionToken) {
         autocompleteSessionToken = new AutocompleteSessionToken();
       }
-      const currentLocation = getCurrentLatLng();
-      const request = {
+      const mapCenter = autocompleteRequestLocation();
+      const baseRequest = {
         input: query,
         language: "ja",
         region: "jp",
         includedRegionCodes: ["jp"],
         sessionToken: autocompleteSessionToken,
-        locationBias: destinationSearchLocationBias()
+        origin: mapCenter
       };
-      if (currentLocation) request.origin = currentLocation;
-
-      const { suggestions } =
-        await AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
+      const responses = await Promise.allSettled([
+        AutocompleteSuggestion.fetchAutocompleteSuggestions({
+          ...baseRequest,
+          locationRestriction: destinationAutocompleteLocationRestriction()
+        }),
+        AutocompleteSuggestion.fetchAutocompleteSuggestions({
+          ...baseRequest,
+          locationBias: destinationSearchLocationBias()
+        })
+      ]);
+      const suggestions = responses.flatMap((response) =>
+        response.status === "fulfilled" ? response.value.suggestions || [] : []
+      );
+      if (
+        !suggestions.length &&
+        responses.every((response) => response.status === "rejected")
+      ) {
+        throw responses[0].reason;
+      }
       if (
         requestId !== autocompleteRequestId ||
         destinationInput?.value.trim() !== query
       ) {
         return;
       }
-      renderDestinationSuggestions(
-        suggestions
-          .map((suggestion) => suggestion.placePrediction)
-          .filter(Boolean)
-          .map((prediction) => ({
-            kind: "autocomplete",
-            prediction,
-            mainText:
-              prediction.mainText?.text || prediction.text?.text || "候補",
-            secondaryText: prediction.secondaryText?.text || "",
-            distanceMeters: prediction.distanceMeters,
-            category: ""
-          }))
-          .slice(0, 5)
-      );
+      renderDestinationSuggestions(rankedAutocompleteItems(suggestions, query));
     } catch (error) {
       if (requestId !== autocompleteRequestId) return;
       console.error("[Ride Navi] 検索候補の取得に失敗しました", error);
