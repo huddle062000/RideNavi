@@ -771,6 +771,11 @@
     overlay.draw = () => {
       const projection = overlay.getProjection();
       const mapRect = map.getDiv().getBoundingClientRect();
+      const visibleBounds = map.getBounds();
+      const center = map.getCenter();
+      const centerLiteral = center
+        ? { lat: center.lat(), lng: center.lng() }
+        : DEFAULT_CENTER;
       const occupiedRects = [];
       const obstacleRects = [$("searchBar"), destinationPanel]
         .filter((element) => element && !element.hidden)
@@ -781,72 +786,76 @@
           top: rect.top - mapRect.top,
           bottom: rect.bottom - mapRect.top
         }));
-      labels.forEach(({ label, item }) => {
-        const point = projection.fromLatLngToContainerPixel(item.location);
-        const divPoint = projection.fromLatLngToDivPixel(item.location);
-        if (!point || !divPoint) {
-          label.hidden = true;
-          return;
-        }
-        const width = label.offsetWidth || 150;
-        const height = label.offsetHeight || 38;
-        const candidates = [
-          { left: point.x - width / 2, top: point.y - height - 38 },
-          { left: point.x + 15, top: point.y - height - 30 },
-          { left: point.x - width - 15, top: point.y - height - 30 },
-          { left: point.x + 19, top: point.y - height / 2 - 16 },
-          { left: point.x - width - 19, top: point.y - height / 2 - 16 },
-          { left: point.x - width / 2, top: point.y + 8 }
-        ];
-        const placement = candidates
-          .map((candidate, index) => {
-            const constrained = {
-              left: Math.min(
-                Math.max(candidate.left, 6),
-                Math.max(6, mapRect.width - width - 6)
-              ),
-              top: Math.min(
-                Math.max(candidate.top, 6),
-                Math.max(6, mapRect.height - height - 6)
-              )
-            };
-            const rect = {
-              left: constrained.left,
-              right: constrained.left + width,
-              top: constrained.top,
-              bottom: constrained.top + height
-            };
-            const overflow =
-              Math.max(0, 6 - rect.left) +
-              Math.max(0, rect.right - mapRect.width + 6) +
-              Math.max(0, 6 - rect.top) +
-              Math.max(0, rect.bottom - mapRect.height + 6);
-            const overlap = occupiedRects.reduce(
-              (total, occupied) =>
-                total + routeLabelOverlapArea(rect, occupied, 4),
-              0
-            );
-            const obstacleOverlap = obstacleRects.reduce(
-              (total, obstacle) =>
-                total + routeLabelOverlapArea(rect, obstacle, 5),
-              0
-            );
-            return {
-              ...constrained,
-              rect,
-              score:
-                overflow * 1000000000 +
-                obstacleOverlap * 10000000 +
-                overlap * 100000 +
-                index
-            };
+      labels
+        .slice()
+        .sort((first, second) =>
+          distanceBetweenMeters(centerLiteral, {
+            lat: first.item.location.lat(),
+            lng: first.item.location.lng()
+          }) -
+          distanceBetweenMeters(centerLiteral, {
+            lat: second.item.location.lat(),
+            lng: second.item.location.lng()
           })
-          .sort((first, second) => first.score - second.score)[0];
-        label.hidden = false;
-        label.style.left = `${placement.left + divPoint.x - point.x}px`;
-        label.style.top = `${placement.top + divPoint.y - point.y}px`;
-        occupiedRects.push(placement.rect);
-      });
+        )
+        .forEach(({ label, item }) => {
+          if (visibleBounds && !visibleBounds.contains(item.location)) {
+            label.hidden = true;
+            return;
+          }
+          const point = projection.fromLatLngToContainerPixel(item.location);
+          const divPoint = projection.fromLatLngToDivPixel(item.location);
+          if (
+            !point ||
+            !divPoint ||
+            point.x < 0 ||
+            point.x > mapRect.width ||
+            point.y < 0 ||
+            point.y > mapRect.height
+          ) {
+            label.hidden = true;
+            return;
+          }
+          const width = label.offsetWidth || 132;
+          const height = label.offsetHeight || 28;
+          const candidates = [
+            { left: point.x + 13, top: point.y - height - 12 },
+            { left: point.x - width - 13, top: point.y - height - 12 },
+            { left: point.x - width / 2, top: point.y - height - 37 }
+          ];
+          const placement = candidates
+            .map((candidate) => {
+              const rect = {
+                left: candidate.left,
+                right: candidate.left + width,
+                top: candidate.top,
+                bottom: candidate.top + height
+              };
+              const fitsMap =
+                rect.left >= 4 &&
+                rect.right <= mapRect.width - 4 &&
+                rect.top >= 4 &&
+                rect.bottom <= mapRect.height - 4;
+              const overlapsLabel = occupiedRects.some(
+                (occupied) => routeLabelOverlapArea(rect, occupied, 5) > 0
+              );
+              const overlapsUi = obstacleRects.some(
+                (obstacle) => routeLabelOverlapArea(rect, obstacle, 4) > 0
+              );
+              return fitsMap && !overlapsLabel && !overlapsUi
+                ? { ...candidate, rect }
+                : null;
+            })
+            .find(Boolean);
+          if (!placement) {
+            label.hidden = true;
+            return;
+          }
+          label.hidden = false;
+          label.style.left = `${placement.left + divPoint.x - point.x}px`;
+          label.style.top = `${placement.top + divPoint.y - point.y}px`;
+          occupiedRects.push(placement.rect);
+        });
     };
 
     overlay.onRemove = () => {
@@ -866,32 +875,35 @@
       : null;
     return {
       top: Math.min(
-        Math.max(112, (searchRect?.bottom || mapRect.top + 64) - mapRect.top + 58),
-        mapRect.height * 0.42
+        Math.max(86, (searchRect?.bottom || mapRect.top + 64) - mapRect.top + 24),
+        mapRect.height * 0.34
       ),
-      right: Math.min(96, mapRect.width * 0.25),
+      right: 42,
       bottom: Math.min(
         Math.max(
-          56,
-          destinationRect ? mapRect.bottom - destinationRect.top + 16 : 56
+          48,
+          destinationRect ? mapRect.bottom - destinationRect.top + 16 : 48
         ),
-        mapRect.height * 0.42
+        mapRect.height * 0.34
       ),
-      left: Math.min(96, mapRect.width * 0.25)
+      left: 42
     };
   }
 
   function showTextSearchResultsOnMap(results) {
     if (!map || navigationActive) return;
+    const initialBounds = map.getBounds();
     const items = (results || [])
-      .slice(0, SEARCH_MAP_MAX_RESULTS)
       .map((item) => {
         const location = placeLocationLiteral(item.place);
         return location
           ? { ...item, location: new google.maps.LatLng(location) }
           : null;
       })
-      .filter(Boolean);
+      .filter(
+        (item) => item && (!initialBounds || initialBounds.contains(item.location))
+      )
+      .slice(0, SEARCH_MAP_MAX_RESULTS);
     if (!items.length) {
       showStatus("地図に表示できる場所がありませんでした", true);
       return;
@@ -913,19 +925,12 @@
         zIndex: 220 - index,
         icon: {
           path: "M0-16C-7.5-16-12-10.4-12-4c0 9 12 20 12 20S12 5 12-4C12-10.4 7.5-16 0-16Z",
-          fillColor: "#1a73e8",
+          fillColor: "#d93025",
           fillOpacity: 1,
           strokeColor: "#ffffff",
           strokeWeight: 2,
-          scale: 1.08,
-          anchor: new google.maps.Point(0, 16),
-          labelOrigin: new google.maps.Point(0, -4)
-        },
-        label: {
-          text: String(index + 1),
-          color: "#ffffff",
-          fontSize: "11px",
-          fontWeight: "800"
+          scale: 1,
+          anchor: new google.maps.Point(0, 16)
         }
       });
       marker.addListener("click", () => {

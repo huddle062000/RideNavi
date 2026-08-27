@@ -30,7 +30,7 @@ button:disabled{cursor:default;opacity:.5}
 .destination-suggestion.is-show-on-map .destination-suggestion-icon{background:#1a73e8;color:#fff;font-size:.7rem}
 .destination-suggestion.is-show-on-map .destination-suggestion-address{color:#0b57d0;font-weight:800}
 
-.search-result-map-label{position:absolute;z-index:1;display:-webkit-box;width:min(148px,38vw);min-height:34px;overflow:hidden;padding:6px 8px;border:1px solid #d2e3fc;border-radius:9px;background:rgba(255,255,255,.97);color:#202124;box-shadow:0 2px 7px rgba(60,64,67,.3);font-size:.69rem;font-weight:800;line-height:1.25;text-align:center;white-space:normal;-webkit-box-orient:vertical;-webkit-line-clamp:2;touch-action:manipulation}
+.search-result-map-label{position:absolute;z-index:1;display:block;width:max-content;max-width:min(132px,34vw);min-height:26px;overflow:hidden;padding:4px 3px;border:0;background:transparent;color:#202124;font-size:.72rem;font-weight:850;line-height:1.25;text-align:left;text-overflow:ellipsis;text-shadow:-1px -1px 0 rgba(255,255,255,.95),1px -1px 0 rgba(255,255,255,.95),-1px 1px 0 rgba(255,255,255,.95),1px 1px 0 rgba(255,255,255,.95),0 1px 3px #fff;white-space:nowrap;touch-action:manipulation}
 .search-result-map-label:focus-visible{outline:3px solid rgba(26,115,232,.32);outline-offset:2px}
 
 .bottom-sheet{position:fixed;z-index:35;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));max-width:620px;margin:auto;padding:8px 14px 14px;border-radius:20px;background:rgba(255,255,255,.98);box-shadow:0 4px 22px rgba(60,64,67,.38)}
@@ -124,7 +124,7 @@ body.is-navigating #rideNaviHeadingControl{z-index:50!important;bottom:calc(200p
 @media(max-width:380px){.route-map-label{min-width:70px;padding:6px 9px 7px}.route-map-label strong{font-size:.94rem}.route-map-label span{font-size:.68rem}}
 @media(orientation:landscape) and (max-height:500px){
   .destination-suggestions{max-height:calc(100vh - 80px)}
-  .search-result-map-label{width:130px;min-height:30px;padding:4px 7px;font-size:.66rem}
+  .search-result-map-label{max-width:118px;min-height:24px;padding:3px 2px;font-size:.66rem}
   .navigation-guidance{top:max(6px,env(safe-area-inset-top));left:50%;right:auto;width:min(390px,calc(100vw - 16px));gap:3px;padding:3px 9px;transform:translateX(-50%);border-radius:13px}
   .navigation-guidance-primary{grid-template-columns:52px minmax(0,1fr);gap:8px}
   .navigation-maneuver-icon{width:52px;height:52px;border-radius:11px}
