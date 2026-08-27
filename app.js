@@ -142,6 +142,7 @@
   const navigationManeuverIcon = $("navigationManeuverIcon");
   const navigationManeuverPath = $("navigationManeuverPath");
   const navigationDistanceInstruction = $("navigationDistanceInstruction");
+  const navigationGuidanceSecondary = $("navigationGuidanceSecondary");
   const navigationIntersectionName = $("navigationIntersectionName");
   const navigationInstruction = $("navigationInstruction");
   const navigationNextInstruction = $("navigationNextInstruction");
@@ -854,14 +855,37 @@
     return `${rounded} m`;
   }
 
+  function navigationManeuverLabel(maneuver, maneuverKind, instruction) {
+    const value = String(maneuver || "").toLowerCase();
+    if (maneuverKind === "uturn-left" || maneuverKind === "uturn-right") {
+      return "Uターン";
+    }
+    if (maneuverKind === "roundabout") return "ラウンドアバウト";
+    if (maneuverKind === "straight") return "直進";
+
+    if (maneuverKind === "left") {
+      if (value.includes("slight") || /斜め左/.test(instruction)) return "斜め左";
+      if (value.includes("turn-left") || /左折/.test(instruction)) return "左折";
+      return "左方向";
+    }
+    if (value.includes("slight") || /斜め右/.test(instruction)) return "斜め右";
+    if (value.includes("turn-right") || /右折/.test(instruction)) return "右折";
+    return "右方向";
+  }
+
   function updateNavigationGuidance(point = getCurrentLatLng()) {
     if (!navigationGuidance || !navigationSteps.length) return;
-    const step = navigationSteps[currentNavigationStepIndex];
-    if (!step) return;
+    const currentStep = navigationSteps[currentNavigationStepIndex];
+    if (!currentStep) return;
+    const maneuverStep =
+      navigationSteps[currentNavigationStepIndex + 1] || currentStep;
     const distance = point
-      ? distanceBetweenMeters(point, step.endLocation)
-      : step.distanceMeters;
-    const maneuverKind = navigationManeuverKind(step.maneuver, step.instruction);
+      ? distanceBetweenMeters(point, currentStep.endLocation)
+      : currentStep.distanceMeters;
+    const maneuverKind = navigationManeuverKind(
+      maneuverStep.maneuver,
+      maneuverStep.instruction
+    );
     navigationDistanceInstruction.textContent = navigationPanelDistanceText(distance);
     if (navigationManeuverIcon) {
       navigationManeuverIcon.dataset.maneuver = maneuverKind;
@@ -871,15 +895,21 @@
       NAVIGATION_MANEUVER_PATHS[maneuverKind] || NAVIGATION_MANEUVER_PATHS.straight
     );
     if (navigationIntersectionName) {
-      navigationIntersectionName.textContent = step.intersectionName
-        ? `交差点：${step.intersectionName}`
+      navigationIntersectionName.textContent = maneuverStep.intersectionName
+        ? `交差点：${maneuverStep.intersectionName}`
         : "";
-      navigationIntersectionName.hidden = !step.intersectionName;
+      navigationIntersectionName.hidden = !maneuverStep.intersectionName;
     }
-    navigationInstruction.textContent = step.instruction;
-    navigationNextInstruction.textContent = navigationSteps[currentNavigationStepIndex + 1]
-      ? `次：${navigationSteps[currentNavigationStepIndex + 1].instruction}`
-      : "目的地まで案内します";
+    if (navigationGuidanceSecondary) {
+      navigationGuidanceSecondary.hidden = !maneuverStep.intersectionName;
+    }
+    navigationInstruction.textContent = navigationManeuverLabel(
+      maneuverStep.maneuver,
+      maneuverKind,
+      maneuverStep.instruction
+    );
+    navigationNextInstruction.textContent = "";
+    navigationNextInstruction.hidden = true;
   }
 
   function showRouteOverview() {
