@@ -139,6 +139,8 @@
   const clearDestinationButton = $("clearDestinationButton");
   const clearRouteDestinationButton = $("clearRouteDestinationButton");
   const navigationGuidance = $("navigationGuidance");
+  const navigationManeuverIcon = $("navigationManeuverIcon");
+  const navigationManeuverPath = $("navigationManeuverPath");
   const navigationDistanceInstruction = $("navigationDistanceInstruction");
   const navigationIntersectionName = $("navigationIntersectionName");
   const navigationInstruction = $("navigationInstruction");
@@ -809,6 +811,49 @@
     hideStatus();
   }
 
+  const NAVIGATION_MANEUVER_PATHS = {
+    straight: "M32 56V12 M18 26L32 12 46 26",
+    left: "M52 54V39C52 29 45 22 35 22H14 M27 9L14 22 27 35",
+    right: "M12 54V39C12 29 19 22 29 22H50 M37 9L50 22 37 35",
+    "uturn-left": "M48 54V31C48 19 41 12 31 12C21 12 14 19 14 31V43 M3 32L14 43 25 32",
+    "uturn-right": "M16 54V31C16 19 23 12 33 12C43 12 50 19 50 31V43 M39 32L50 43 61 32",
+    roundabout: "M46 19A20 20 0 1 0 49 42 M47 10L46 25 32 21"
+  };
+
+  function navigationManeuverKind(maneuver, instruction) {
+    const value = String(maneuver || "").toLowerCase();
+    if (value.includes("uturn-left")) return "uturn-left";
+    if (value.includes("uturn-right")) return "uturn-right";
+    if (value.includes("roundabout")) return "roundabout";
+    if (value.includes("left")) return "left";
+    if (value.includes("right")) return "right";
+    if (value === "straight") return "straight";
+
+    if (/(?:Uターン|Ｕターン).*(?:左|反時計)/.test(instruction)) {
+      return "uturn-left";
+    }
+    if (/(?:Uターン|Ｕターン).*(?:右|時計)/.test(instruction)) {
+      return "uturn-right";
+    }
+    if (/(?:Uターン|Ｕターン)/.test(instruction)) return "uturn-left";
+    if (/(?:ロータリー|ラウンドアバウト|環状交差点)/.test(instruction)) {
+      return "roundabout";
+    }
+    if (/(?:左折|左方向|左へ|左に|斜め左)/.test(instruction)) return "left";
+    if (/(?:右折|右方向|右へ|右に|斜め右)/.test(instruction)) return "right";
+    return "straight";
+  }
+
+  function navigationPanelDistanceText(distance) {
+    if (!Number.isFinite(distance)) return "―";
+    if (distance >= 1000) {
+      const kilometers = distance / 1000;
+      return `${kilometers < 10 ? kilometers.toFixed(1) : Math.round(kilometers)} km`;
+    }
+    const rounded = Math.max(10, Math.round(distance / 10) * 10);
+    return `${rounded} m`;
+  }
+
   function updateNavigationGuidance(point = getCurrentLatLng()) {
     if (!navigationGuidance || !navigationSteps.length) return;
     const step = navigationSteps[currentNavigationStepIndex];
@@ -816,7 +861,15 @@
     const distance = point
       ? distanceBetweenMeters(point, step.endLocation)
       : step.distanceMeters;
-    navigationDistanceInstruction.textContent = navigationDistanceText(distance);
+    const maneuverKind = navigationManeuverKind(step.maneuver, step.instruction);
+    navigationDistanceInstruction.textContent = navigationPanelDistanceText(distance);
+    if (navigationManeuverIcon) {
+      navigationManeuverIcon.dataset.maneuver = maneuverKind;
+    }
+    navigationManeuverPath?.setAttribute(
+      "d",
+      NAVIGATION_MANEUVER_PATHS[maneuverKind] || NAVIGATION_MANEUVER_PATHS.straight
+    );
     if (navigationIntersectionName) {
       navigationIntersectionName.textContent = step.intersectionName
         ? `交差点：${step.intersectionName}`
@@ -2931,6 +2984,7 @@ followToggle.checked = true;
 
         steps.push({
           instruction,
+          maneuver: step.maneuver || "",
           intersectionName: extractIntersectionName(instruction),
           endLocation: {
             lat: step.end_location.lat(),

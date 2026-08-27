@@ -66,11 +66,22 @@
       </div>
     </section>
 
-    <section id="navigationGuidance" class="navigation-guidance" hidden aria-live="polite">
-      <span id="navigationDistanceInstruction">案内を準備しています</span>
-      <span id="navigationIntersectionName" class="navigation-intersection" hidden></span>
-      <strong id="navigationInstruction">そのままお進みください</strong>
-      <small id="navigationNextInstruction"></small>
+    <section id="navigationGuidance" class="navigation-guidance" hidden aria-live="polite" aria-atomic="true" aria-label="次の進行案内">
+      <div class="navigation-guidance-primary">
+        <span id="navigationManeuverIcon" class="navigation-maneuver-icon" aria-hidden="true">
+          <svg viewBox="0 0 64 64" focusable="false">
+            <path id="navigationManeuverPath" d="M32 56V12 M18 26L32 12 46 26"></path>
+          </svg>
+        </span>
+        <div class="navigation-guidance-copy">
+          <strong id="navigationDistanceInstruction">案内準備中</strong>
+          <span id="navigationInstruction">そのままお進みください</span>
+        </div>
+      </div>
+      <div class="navigation-guidance-secondary">
+        <span id="navigationIntersectionName" class="navigation-intersection" hidden></span>
+        <small id="navigationNextInstruction"></small>
+      </div>
     </section>
 
     <section id="rideNaviInfoPanel" class="navigation-bottom" aria-label="ナビ情報">
