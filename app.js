@@ -289,6 +289,47 @@
     if (routeSummaryPanel) routeSummaryPanel.hidden = true;
   }
 
+  function updateFloatingLocationPanelOffset() {
+    if (!destinationPanel || !floatingLocationButton) return;
+    if (
+      destinationPanel.hidden ||
+      window.getComputedStyle(destinationPanel).display === "none"
+    ) {
+      floatingLocationButton.style.removeProperty("--floating-location-bottom");
+      return;
+    }
+
+    const panelBottom = Number.parseFloat(
+      window.getComputedStyle(destinationPanel).bottom
+    );
+    const bottomOffset =
+      destinationPanel.offsetHeight +
+      (Number.isFinite(panelBottom) ? panelBottom : 0) +
+      12;
+    floatingLocationButton.style.setProperty(
+      "--floating-location-bottom",
+      `${Math.ceil(bottomOffset)}px`
+    );
+  }
+
+  function observeDestinationPanelLayout() {
+    if (!destinationPanel || !floatingLocationButton) return;
+    const scheduleUpdate = () => {
+      window.requestAnimationFrame(updateFloatingLocationPanelOffset);
+    };
+
+    new MutationObserver(scheduleUpdate).observe(destinationPanel, {
+      attributes: true,
+      attributeFilter: ["hidden"]
+    });
+    if ("ResizeObserver" in window) {
+      new ResizeObserver(scheduleUpdate).observe(destinationPanel);
+    }
+    destinationPanel.addEventListener("animationend", scheduleUpdate);
+    window.addEventListener("resize", scheduleUpdate);
+    updateFloatingLocationPanelOffset();
+  }
+
   function hideDestinationSuggestions() {
     autocompletePredictions = [];
     autocompleteActiveIndex = -1;
@@ -4835,6 +4876,7 @@ followToggle.checked = true;
 
   createNavigationButton();
   createShareButton();
+  observeDestinationPanelLayout();
   updateWaypointDisplay();
   updateRouteInfoEmpty();
   loadRouteFromUrl();
