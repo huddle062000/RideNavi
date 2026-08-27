@@ -161,6 +161,7 @@
   const NAVIGATION_START_ZOOM_DURATION_MS = 1150;
   const NAVIGATION_START_HEADING_DELAY_MS = 1500;
   const NAVIGATION_START_FOLLOW_DELAY_MS = 1750;
+  const NAVIGATION_VEHICLE_SCREEN_Y_RATIO = 0.76;
   const clearRouteButton = $("clearRouteButton");
   const locationButton = $("locationButton");
   const floatingLocationButton = $("floatingLocationButton");
@@ -2682,6 +2683,48 @@ function showRouteChoices(candidates, searchId) {
     if (icon) userMarker.setIcon(icon);
   }
 
+  function navigationCameraOffsetPixels() {
+    const mapHeight = map?.getDiv()?.clientHeight || 0;
+    return Math.max(
+      0,
+      Math.round(mapHeight * (NAVIGATION_VEHICLE_SCREEN_Y_RATIO - 0.5))
+    );
+  }
+
+  function navigationCameraCenter(point) {
+    const projection = map?.getProjection?.();
+    const zoom = map?.getZoom?.();
+    if (!projection || !Number.isFinite(zoom)) return null;
+
+    const worldPoint = projection.fromLatLngToPoint(point);
+    if (!worldPoint) return null;
+
+    const headingRadians = ((map.getHeading?.() || 0) * Math.PI) / 180;
+    const worldOffset = navigationCameraOffsetPixels() / 2 ** zoom;
+    return projection.fromPointToLatLng(
+      new google.maps.Point(
+        worldPoint.x + Math.sin(headingRadians) * worldOffset,
+        worldPoint.y - Math.cos(headingRadians) * worldOffset
+      )
+    );
+  }
+
+  function panToNavigationLocation(point) {
+    if (!navigationActive || navigationOverviewActive) {
+      map.panTo(point);
+      return;
+    }
+
+    const cameraCenter = navigationCameraCenter(point);
+    if (cameraCenter) {
+      map.panTo(cameraCenter);
+      return;
+    }
+
+    map.panTo(point);
+    map.panBy(0, -navigationCameraOffsetPixels());
+  }
+
   function cancelNavigationStartMapAnimation() {
     navigationStartAnimationTimers.forEach((timer) => clearTimeout(timer));
     navigationStartAnimationTimers = [];
@@ -2794,10 +2837,6 @@ function showRouteChoices(candidates, searchId) {
       ? NAVIGATION_START_ZOOM_MOBILE
       : NAVIGATION_START_ZOOM_DESKTOP;
     const startHeading = navigationStartMapHeading(point);
-    const forwardOffset = Math.min(
-      90,
-      Math.max(54, map.getDiv().clientHeight * 0.12)
-    );
 
     followToggle.checked = false;
 
@@ -2812,7 +2851,7 @@ function showRouteChoices(candidates, searchId) {
         map.setHeading(0);
       }
       updateLocationMarkerHeading();
-      map.panBy(0, forwardOffset);
+      panToNavigationLocation(point);
     };
     const enableFollow = () => {
       if (!navigationActive) return;
@@ -2882,14 +2921,16 @@ function showRouteChoices(candidates, searchId) {
       accuracyCircle.setRadius(accuracy);
     }
 
-    if (followToggle.checked) {
-      map.panTo(point);
-    }
-
     updateLocationMarkerHeading();
 
     if (headingUpEnabled && Number.isFinite(lastKnownHeading)) {
       map.setHeading(lastKnownHeading);
+    }
+
+    if (followToggle.checked) {
+      navigationActive
+        ? panToNavigationLocation(point)
+        : map.panTo(point);
     }
 
     if (navigationActive) {
@@ -2958,8 +2999,13 @@ followToggle.checked = true;
     document.body.classList.remove("is-overview");
     if (returnToLocationButton) returnToLocationButton.hidden = true;
     $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
-    map.panTo(point);
-    map.setZoom(16);
+    if (navigationActive) {
+      map.setZoom(16);
+      panToNavigationLocation(point);
+    } else {
+      map.panTo(point);
+      map.setZoom(16);
+    }
   }
 
   function toggleTrafficLayer() {
