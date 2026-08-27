@@ -15,6 +15,8 @@
   const AUTOCOMPLETE_LOCAL_MIN_RADIUS_METERS = 8000;
   const AUTOCOMPLETE_DISPLAY_RESULTS = 8;
   const TEXT_SEARCH_MAX_RESULTS = 10;
+  const SEARCH_MAP_MAX_RESULTS = 8;
+  const SEARCH_MAP_MAX_ZOOM = 15;
   const DESTINATION_SELECTION_ZOOM = 16;
   const TOUCH_LONG_PRESS_MOVE_TOLERANCE_PX = 24;
   const MOUSE_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
@@ -200,6 +202,8 @@
   let autocompletePredictions = [];
   let autocompleteActiveIndex = -1;
   let placesLibraryPromise = null;
+  let searchResultMarkers = [];
+  let searchResultLabelsOverlay = null;
   let mapSelectionTarget = null;
   let accuracyCircle = null;
   let statusTimer = null;
@@ -372,6 +376,18 @@
     return `${kilometers < 10 ? kilometers.toFixed(1) : Math.round(kilometers)} km`;
   }
 
+  function showSearchResultsItem(query, results = null) {
+    return {
+      kind: "show-search-results",
+      query,
+      results,
+      mainText: query,
+      secondaryText: "場所を表示",
+      distanceMeters: null,
+      category: ""
+    };
+  }
+
   function updateAutocompleteActiveItem(nextIndex) {
     if (!autocompletePredictions.length) return;
     autocompleteActiveIndex =
@@ -416,6 +432,10 @@
         "is-search-result",
         prediction.kind === "text-search"
       );
+      button.classList.toggle(
+        "is-show-on-map",
+        prediction.kind === "show-search-results"
+      );
       button.setAttribute("role", "option");
       button.setAttribute("aria-selected", "false");
       button.setAttribute(
@@ -425,7 +445,7 @@
           .join("、")
       );
       icon.className = "destination-suggestion-icon";
-      icon.textContent = "⌖";
+      icon.textContent = prediction.kind === "show-search-results" ? "●" : "⌖";
       icon.setAttribute("aria-hidden", "true");
       text.className = "destination-suggestion-text";
       main.className = "destination-suggestion-main";
@@ -581,7 +601,10 @@
       ) {
         return;
       }
-      renderDestinationSuggestions(rankedAutocompleteItems(suggestions, query));
+      renderDestinationSuggestions([
+        showSearchResultsItem(query),
+        ...rankedAutocompleteItems(suggestions, query)
+      ]);
     } catch (error) {
       if (requestId !== autocompleteRequestId) return;
       console.error("[Ride Navi] 検索候補の取得に失敗しました", error);
@@ -715,7 +738,222 @@
       );
   }
 
-  async function searchDestinationByText() {
+  function clearSearchResultMap() {
+    searchResultMarkers.forEach((marker) => marker.setMap(null));
+    searchResultMarkers = [];
+    searchResultLabelsOverlay?.setMap(null);
+    searchResultLabelsOverlay = null;
+  }
+
+  function createSearchResultLabelsOverlay(items) {
+    const overlay = new google.maps.OverlayView();
+    const labels = [];
+
+    overlay.onAdd = () => {
+      const pane = overlay.getPanes().overlayMouseTarget;
+      items.forEach((item) => {
+        const label = document.createElement("button");
+        label.type = "button";
+        label.className = "search-result-map-label";
+        label.textContent = item.mainText;
+        label.title = item.mainText;
+        label.setAttribute("aria-label", `${item.mainText}を目的地に選択`);
+        label.addEventListener("pointerdown", (event) => event.stopPropagation());
+        label.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void selectTextSearchPlace(item.place);
+        });
+        pane.appendChild(label);
+        labels.push({ label, item });
+      });
+    };
+
+    overlay.draw = () => {
+      const projection = overlay.getProjection();
+      const mapRect = map.getDiv().getBoundingClientRect();
+      const occupiedRects = [];
+      const obstacleRects = [$("searchBar"), destinationPanel]
+        .filter((element) => element && !element.hidden)
+        .map((element) => element.getBoundingClientRect())
+        .map((rect) => ({
+          left: rect.left - mapRect.left,
+          right: rect.right - mapRect.left,
+          top: rect.top - mapRect.top,
+          bottom: rect.bottom - mapRect.top
+        }));
+      labels.forEach(({ label, item }) => {
+        const point = projection.fromLatLngToContainerPixel(item.location);
+        const divPoint = projection.fromLatLngToDivPixel(item.location);
+        if (!point || !divPoint) {
+          label.hidden = true;
+          return;
+        }
+        const width = label.offsetWidth || 150;
+        const height = label.offsetHeight || 38;
+        const candidates = [
+          { left: point.x - width / 2, top: point.y - height - 38 },
+          { left: point.x + 15, top: point.y - height - 30 },
+          { left: point.x - width - 15, top: point.y - height - 30 },
+          { left: point.x + 19, top: point.y - height / 2 - 16 },
+          { left: point.x - width - 19, top: point.y - height / 2 - 16 },
+          { left: point.x - width / 2, top: point.y + 8 }
+        ];
+        const placement = candidates
+          .map((candidate, index) => {
+            const constrained = {
+              left: Math.min(
+                Math.max(candidate.left, 6),
+                Math.max(6, mapRect.width - width - 6)
+              ),
+              top: Math.min(
+                Math.max(candidate.top, 6),
+                Math.max(6, mapRect.height - height - 6)
+              )
+            };
+            const rect = {
+              left: constrained.left,
+              right: constrained.left + width,
+              top: constrained.top,
+              bottom: constrained.top + height
+            };
+            const overflow =
+              Math.max(0, 6 - rect.left) +
+              Math.max(0, rect.right - mapRect.width + 6) +
+              Math.max(0, 6 - rect.top) +
+              Math.max(0, rect.bottom - mapRect.height + 6);
+            const overlap = occupiedRects.reduce(
+              (total, occupied) =>
+                total + routeLabelOverlapArea(rect, occupied, 4),
+              0
+            );
+            const obstacleOverlap = obstacleRects.reduce(
+              (total, obstacle) =>
+                total + routeLabelOverlapArea(rect, obstacle, 5),
+              0
+            );
+            return {
+              ...constrained,
+              rect,
+              score:
+                overflow * 1000000000 +
+                obstacleOverlap * 10000000 +
+                overlap * 100000 +
+                index
+            };
+          })
+          .sort((first, second) => first.score - second.score)[0];
+        label.hidden = false;
+        label.style.left = `${placement.left + divPoint.x - point.x}px`;
+        label.style.top = `${placement.top + divPoint.y - point.y}px`;
+        occupiedRects.push(placement.rect);
+      });
+    };
+
+    overlay.onRemove = () => {
+      labels.forEach(({ label }) => label.remove());
+      labels.length = 0;
+    };
+
+    overlay.setMap(map);
+    return overlay;
+  }
+
+  function searchResultMapPadding() {
+    const mapRect = map.getDiv().getBoundingClientRect();
+    const searchRect = $("searchBar")?.getBoundingClientRect();
+    const destinationRect = !destinationPanel?.hidden
+      ? destinationPanel.getBoundingClientRect()
+      : null;
+    return {
+      top: Math.min(
+        Math.max(112, (searchRect?.bottom || mapRect.top + 64) - mapRect.top + 58),
+        mapRect.height * 0.42
+      ),
+      right: Math.min(96, mapRect.width * 0.25),
+      bottom: Math.min(
+        Math.max(
+          56,
+          destinationRect ? mapRect.bottom - destinationRect.top + 16 : 56
+        ),
+        mapRect.height * 0.42
+      ),
+      left: Math.min(96, mapRect.width * 0.25)
+    };
+  }
+
+  function showTextSearchResultsOnMap(results) {
+    if (!map || navigationActive) return;
+    const items = (results || [])
+      .slice(0, SEARCH_MAP_MAX_RESULTS)
+      .map((item) => {
+        const location = placeLocationLiteral(item.place);
+        return location
+          ? { ...item, location: new google.maps.LatLng(location) }
+          : null;
+      })
+      .filter(Boolean);
+    if (!items.length) {
+      showStatus("地図に表示できる場所がありませんでした", true);
+      return;
+    }
+
+    autocompleteRequestId += 1;
+    autocompleteSessionToken = null;
+    hideDestinationSuggestions();
+    clearSearchResultMap();
+    destinationInput?.blur();
+
+    const bounds = new google.maps.LatLngBounds();
+    searchResultMarkers = items.map((item, index) => {
+      bounds.extend(item.location);
+      const marker = new google.maps.Marker({
+        map,
+        position: item.location,
+        title: item.mainText,
+        zIndex: 220 - index,
+        icon: {
+          path: "M0-16C-7.5-16-12-10.4-12-4c0 9 12 20 12 20S12 5 12-4C12-10.4 7.5-16 0-16Z",
+          fillColor: "#1a73e8",
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 2,
+          scale: 1.08,
+          anchor: new google.maps.Point(0, 16),
+          labelOrigin: new google.maps.Point(0, -4)
+        },
+        label: {
+          text: String(index + 1),
+          color: "#ffffff",
+          fontSize: "11px",
+          fontWeight: "800"
+        }
+      });
+      marker.addListener("click", () => {
+        void selectTextSearchPlace(item.place);
+      });
+      return marker;
+    });
+    searchResultLabelsOverlay = createSearchResultLabelsOverlay(items);
+
+    if (items.length === 1) {
+      map.panTo(items[0].location);
+      map.setZoom(SEARCH_MAP_MAX_ZOOM);
+    } else {
+      const renderedMarkers = searchResultMarkers;
+      map.fitBounds(bounds, searchResultMapPadding());
+      google.maps.event.addListenerOnce(map, "idle", () => {
+        if (
+          searchResultMarkers === renderedMarkers &&
+          map.getZoom() > SEARCH_MAP_MAX_ZOOM
+        ) {
+          map.setZoom(SEARCH_MAP_MAX_ZOOM);
+        }
+      });
+    }
+    hideStatus();
+  }
+
+  async function searchDestinationByText(showOnMap = false) {
     const query = destinationInput?.value.trim() || "";
     if (!query || navigationActive || !map) return;
 
@@ -724,6 +962,7 @@
     autocompleteTimer = null;
     autocompleteSessionToken = null;
     hideDestinationSuggestions();
+    clearSearchResultMap();
     destinationInput?.blur();
     showStatus("目的地を検索しています…");
 
@@ -759,7 +998,14 @@
         return;
       }
 
-      renderDestinationSuggestions(results);
+      if (showOnMap) {
+        showTextSearchResultsOnMap(results);
+      } else {
+        renderDestinationSuggestions([
+          showSearchResultsItem(query, results),
+          ...results
+        ]);
+      }
       hideStatus();
     } catch (error) {
       if (searchRequestId !== autocompleteRequestId) return;
@@ -790,6 +1036,14 @@
   }
 
   async function selectDestinationSearchItem(item) {
+    if (item?.kind === "show-search-results") {
+      if (item.results) {
+        showTextSearchResultsOnMap(item.results);
+      } else {
+        await searchDestinationByText(true);
+      }
+      return;
+    }
     if (item?.kind === "text-search") {
       await selectTextSearchPlace(item.place);
       return;
@@ -1059,6 +1313,7 @@
 
   function updateDestinationDetails(latLng, selectedPlaceId = "", selectedPlace = null) {
     cancelDestinationSuggestions();
+    clearSearchResultMap();
     const selectionId = ++destinationSelectionId;
     const lat = latLng.lat().toFixed(6);
     const lng = latLng.lng().toFixed(6);
@@ -1117,6 +1372,7 @@
     cancelPendingRouteSearch();
     cancelMapSelection();
     clearDisplayedRoute(false);
+    clearSearchResultMap();
     destinationMarker?.setMap(null);
     destinationMarker = null;
     destinationInput.value = "";
@@ -5305,6 +5561,7 @@ followToggle.checked = true;
 
   destinationInput?.addEventListener("input", () => {
     destinationSelectionId += 1;
+    clearSearchResultMap();
     delete destinationInput.dataset.selectedCoordinate;
     delete destinationInput.dataset.selectedLabel;
     delete destinationInput.dataset.selectedPlaceId;
