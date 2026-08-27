@@ -152,18 +152,23 @@ body.is-navigating #rideNaviHeadingControl{z-index:50!important;bottom:calc(200p
   .summary-actions{gap:5px}
   .summary-actions button{min-height:42px;padding:0 5px;border-radius:10px;font-size:.78rem}
 
-  .navigation-bottom{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));bottom:max(6px,env(safe-area-inset-bottom));width:auto;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) minmax(0,.9fr);gap:8px;align-items:center;padding:6px 8px;transform:none;border-radius:14px}
+  .navigation-bottom{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));bottom:max(5px,env(safe-area-inset-bottom));width:auto;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) auto;gap:6px;align-items:center;padding:4px 6px;transform:none;border-radius:12px}
   .navigation-destination{gap:5px}
   .navigation-destination span{font-size:.62rem}
   .navigation-destination strong{font-size:.82rem}
-  .navigation-metrics{gap:3px}
+  .navigation-metrics{grid-template-columns:repeat(2,1fr);gap:3px}
+  .navigation-metrics div:nth-child(3){display:none}
   .navigation-metrics span{font-size:.58rem}
   .navigation-metrics strong{font-size:.92rem}
-  .navigation-bottom-actions{gap:5px}
-  .navigation-bottom-actions button{min-height:42px;padding:0 5px;border-radius:10px;font-size:.78rem}
-  body.is-navigating #rideNaviHeadingControl{right:max(10px,env(safe-area-inset-right))!important;bottom:calc(66px + env(safe-area-inset-bottom))!important}
-  #rideNaviHeadingControl button{width:46px!important;height:46px!important;font-size:24px!important}
-  .return-location{right:max(10px,env(safe-area-inset-right));bottom:calc(66px + env(safe-area-inset-bottom));min-height:44px;padding:0 13px}
-  .status{bottom:calc(66px + env(safe-area-inset-bottom))}
+  .navigation-bottom-actions{display:flex;justify-content:flex-end;gap:0}
+  #overviewButton{display:none}
+  .navigation-bottom-actions #endNavigationButton{min-width:74px;min-height:36px;padding:0 9px;border-radius:9px;font-size:.72rem}
+  body.is-navigating .floating-location{right:max(10px,env(safe-area-inset-right));bottom:calc(55px + env(safe-area-inset-bottom));display:block!important;width:44px;height:44px;font-size:1.3rem}
+  body.is-navigating .floating-location.route-overview-active{background:#1a73e8;color:#fff}
+  body.is-navigating #rideNaviHeadingControl{right:calc(max(10px,env(safe-area-inset-right)) + 52px)!important;bottom:calc(55px + env(safe-area-inset-bottom))!important}
+  body.is-navigating #rideNaviHeadingControl.is-overview-hidden{display:none!important}
+  #rideNaviHeadingControl button{width:44px!important;height:44px!important;font-size:23px!important}
+  body.is-navigating .return-location{display:none!important}
+  .status{bottom:calc(55px + env(safe-area-inset-bottom))}
 }
 @media(prefers-reduced-motion:reduce){.destination-sheet{animation:none}}

@@ -200,6 +200,7 @@
   let routeLabelOverlays = [];
   let longPressTimer = null;
   let navigationOverviewActive = false;
+  let landscapeLocationTogglePrimed = false;
   let navigationStartAnimationTimers = [];
   let navigationStartPanFrame = null;
   let navigationStartZoomFrame = null;
@@ -929,6 +930,62 @@
     returnToLocationButton.hidden = true;
     $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
     centerOnCurrentLocation();
+  }
+
+  function isLandscapeNavigationLayout() {
+    return Boolean(
+      navigationActive &&
+      window.matchMedia?.("(orientation: landscape) and (max-height: 500px)").matches
+    );
+  }
+
+  function syncFloatingLocationButton() {
+    if (!floatingLocationButton) return;
+
+    if (!isLandscapeNavigationLayout()) {
+      floatingLocationButton.classList.remove("route-overview-active");
+      floatingLocationButton.setAttribute("aria-pressed", "false");
+      floatingLocationButton.setAttribute("aria-label", "現在地へ");
+      floatingLocationButton.title = "現在地へ";
+      return;
+    }
+
+    const label = !landscapeLocationTogglePrimed
+      ? "現在地を中心に表示"
+      : navigationOverviewActive
+        ? "現在地中心表示に戻る"
+        : "ルート全体を表示";
+    floatingLocationButton.classList.toggle(
+      "route-overview-active",
+      navigationOverviewActive
+    );
+    floatingLocationButton.setAttribute(
+      "aria-pressed",
+      navigationOverviewActive ? "true" : "false"
+    );
+    floatingLocationButton.setAttribute("aria-label", label);
+    floatingLocationButton.title = label;
+  }
+
+  function handleFloatingLocationButton() {
+    if (!isLandscapeNavigationLayout()) {
+      centerOnCurrentLocation();
+      return;
+    }
+
+    if (!landscapeLocationTogglePrimed) {
+      centerOnCurrentLocation();
+      landscapeLocationTogglePrimed = Boolean(getCurrentLatLng());
+      syncFloatingLocationButton();
+      return;
+    }
+
+    if (navigationOverviewActive) {
+      returnToCurrentLocation();
+    } else {
+      showRouteOverview();
+    }
+    syncFloatingLocationButton();
   }
 
   function cancelMapSelection(showMessage = false) {
@@ -3361,11 +3418,13 @@ followToggle.checked = true;
     offRouteCount = 0;
     rerouteInProgress = false;
     navigationActive = true;
+    landscapeLocationTogglePrimed = false;
     headingUpEnabled = true;
     navigationButton.textContent = "■ ナビ終了";
     document.body.classList.add("is-navigating");
     document.body.classList.remove("is-overview");
     $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
+    syncFloatingLocationButton();
     if (navigationGuidance) navigationGuidance.hidden = false;
     if (navigationDestination) {
       navigationDestination.textContent =
@@ -3403,6 +3462,7 @@ followToggle.checked = true;
   function stopNavigation(speak = true) {
     cancelNavigationStartMapAnimation();
     navigationActive = false;
+    landscapeLocationTogglePrimed = false;
     offRouteCount = 0;
     rerouteInProgress = false;
     navigationButton.textContent = "▶ ナビ開始";
@@ -3411,6 +3471,7 @@ followToggle.checked = true;
     hideNavigationInfoPanel();
     if (returnToLocationButton) returnToLocationButton.hidden = true;
     $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
+    syncFloatingLocationButton();
 
     clearDisplayedRoute(false);
 
@@ -4657,7 +4718,7 @@ followToggle.checked = true;
   destinationShareButton?.addEventListener("click", shareRouteUrl);
   clearRouteButton?.addEventListener("click", () => clearDisplayedRoute(true));
   locationButton?.addEventListener("click", centerOnCurrentLocation);
-  floatingLocationButton?.addEventListener("click", centerOnCurrentLocation);
+  floatingLocationButton?.addEventListener("click", handleFloatingLocationButton);
   trafficToggle?.addEventListener("change", toggleTrafficLayer);
   voiceTestButton?.addEventListener("click", voiceTest);
 
