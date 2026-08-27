@@ -11,7 +11,8 @@
   const ROUTE_SEARCH_CACHE_LIMIT = 12;
   const LONG_PRESS_DELAY_MS = 550;
   const AUTOCOMPLETE_DEBOUNCE_MS = 250;
-  const AUTOCOMPLETE_LOCATION_BIAS_METERS = 50000;
+  const AUTOCOMPLETE_LOCATION_BIAS_METERS = 25000;
+  const TEXT_SEARCH_MAX_RESULTS = 10;
   const DESTINATION_SELECTION_ZOOM = 16;
   const TOUCH_LONG_PRESS_MOVE_TOLERANCE_PX = 24;
   const MOUSE_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
@@ -401,18 +402,25 @@
       const secondary = document.createElement("span");
       const address = document.createElement("span");
       const distance = document.createElement("span");
-      const mainText = prediction.mainText?.text || prediction.text?.text || "候補";
-      const secondaryText = prediction.secondaryText?.text || "";
+      const category = document.createElement("span");
+      const mainText = prediction.mainText || "候補";
+      const secondaryText = prediction.secondaryText || "";
       const distanceText = formatSuggestionDistance(prediction.distanceMeters);
 
       button.type = "button";
       button.id = `destinationSuggestion${index}`;
       button.className = "destination-suggestion";
+      button.classList.toggle(
+        "is-search-result",
+        prediction.kind === "text-search"
+      );
       button.setAttribute("role", "option");
       button.setAttribute("aria-selected", "false");
       button.setAttribute(
         "aria-label",
-        [mainText, secondaryText, distanceText].filter(Boolean).join("、")
+        [mainText, secondaryText, distanceText, prediction.category]
+          .filter(Boolean)
+          .join("、")
       );
       icon.className = "destination-suggestion-icon";
       icon.textContent = "⌖";
@@ -425,11 +433,14 @@
       address.textContent = secondaryText;
       distance.className = "destination-suggestion-distance";
       distance.textContent = distanceText;
+      category.className = "destination-suggestion-category";
+      category.textContent = prediction.category || "";
+      category.hidden = !prediction.category;
       secondary.append(address, distance);
-      text.append(main, secondary);
+      text.append(main, secondary, category);
       button.append(icon, text);
       button.addEventListener("click", () => {
-        void selectAutocompletePrediction(prediction);
+        void selectDestinationSearchItem(prediction);
       });
       destinationSuggestions.appendChild(button);
     });
@@ -486,6 +497,15 @@
         suggestions
           .map((suggestion) => suggestion.placePrediction)
           .filter(Boolean)
+          .map((prediction) => ({
+            kind: "autocomplete",
+            prediction,
+            mainText:
+              prediction.mainText?.text || prediction.text?.text || "候補",
+            secondaryText: prediction.secondaryText?.text || "",
+            distanceMeters: prediction.distanceMeters,
+            category: ""
+          }))
           .slice(0, 5)
       );
     } catch (error) {
@@ -547,6 +567,162 @@
     }
   }
 
+  function normalizedPlaceSearchText(text) {
+    return String(text || "")
+      .normalize("NFKC")
+      .toLocaleLowerCase("ja")
+      .replace(/\s+/g, "");
+  }
+
+  function textSearchMatchTier(query, placeName) {
+    const normalizedQuery = normalizedPlaceSearchText(query);
+    const normalizedName = normalizedPlaceSearchText(placeName);
+    if (normalizedName === normalizedQuery) return 0;
+    if (normalizedName.includes(normalizedQuery)) return 1;
+
+    const queryParts = String(query || "")
+      .normalize("NFKC")
+      .toLocaleLowerCase("ja")
+      .split(/\s+/)
+      .filter(Boolean);
+    return queryParts.length &&
+      queryParts.every((part) => normalizedName.includes(part))
+      ? 1
+      : 2;
+  }
+
+  function placeLocationLiteral(place) {
+    const latitude =
+      typeof place?.location?.lat === "function"
+        ? place.location.lat()
+        : place?.location?.lat;
+    const longitude =
+      typeof place?.location?.lng === "function"
+        ? place.location.lng()
+        : place?.location?.lng;
+    return Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? { lat: latitude, lng: longitude }
+      : null;
+  }
+
+  function textSearchResultItems(places, query, biasLocation) {
+    const currentLocation = getCurrentLatLng();
+    return places
+      .map((place, index) => {
+        const location = placeLocationLiteral(place);
+        const displayName = place.displayName?.text || place.displayName || "候補";
+        const category =
+          place.primaryTypeDisplayName?.text ||
+          place.primaryTypeDisplayName ||
+          "";
+        return {
+          kind: "text-search",
+          place,
+          mainText: displayName,
+          secondaryText: place.formattedAddress || "",
+          category,
+          distanceMeters:
+            currentLocation && location
+              ? distanceBetweenMeters(currentLocation, location)
+              : null,
+          rankingDistanceMeters:
+            biasLocation && location
+              ? distanceBetweenMeters(biasLocation, location)
+              : Infinity,
+          matchTier: textSearchMatchTier(query, displayName),
+          originalIndex: index
+        };
+      })
+      .filter((item) => placeLocationLiteral(item.place))
+      .sort((a, b) =>
+        a.matchTier - b.matchTier ||
+        a.rankingDistanceMeters - b.rankingDistanceMeters ||
+        a.originalIndex - b.originalIndex
+      );
+  }
+
+  async function searchDestinationByText() {
+    const query = destinationInput?.value.trim() || "";
+    if (!query || navigationActive || !map) return;
+
+    const searchRequestId = ++autocompleteRequestId;
+    if (autocompleteTimer) clearTimeout(autocompleteTimer);
+    autocompleteTimer = null;
+    autocompleteSessionToken = null;
+    hideDestinationSuggestions();
+    destinationInput?.blur();
+    showStatus("目的地を検索しています…");
+
+    try {
+      const { Place } = await autocompletePlacesLibrary();
+      const location = autocompleteRequestLocation();
+      const { places } = await Place.searchByText({
+        textQuery: query,
+        fields: [
+          "id",
+          "displayName",
+          "formattedAddress",
+          "location",
+          "primaryTypeDisplayName"
+        ],
+        language: "ja",
+        region: "jp",
+        locationBias: location,
+        maxResultCount: TEXT_SEARCH_MAX_RESULTS
+      });
+      if (
+        searchRequestId !== autocompleteRequestId ||
+        destinationInput?.value.trim() !== query
+      ) {
+        return;
+      }
+
+      const results = textSearchResultItems(places || [], query, location);
+      if (!results.length) {
+        hideDestinationSuggestions();
+        showStatus("目的地が見つかりませんでした", true);
+        destinationInput?.focus();
+        return;
+      }
+
+      renderDestinationSuggestions(results);
+      hideStatus();
+    } catch (error) {
+      if (searchRequestId !== autocompleteRequestId) return;
+      console.error("[Ride Navi] 目的地検索に失敗しました", error);
+      hideDestinationSuggestions();
+      showStatus("目的地を検索できませんでした", true);
+      destinationInput?.focus();
+    }
+  }
+
+  async function selectTextSearchPlace(place) {
+    if (!place || navigationActive) return;
+    const location = placeLocationLiteral(place);
+    if (!location) {
+      showStatus("目的地の位置を取得できませんでした", true);
+      return;
+    }
+
+    autocompleteRequestId += 1;
+    hideDestinationSuggestions();
+    destinationInput?.blur();
+    autocompleteSessionToken = null;
+    const latLng = new google.maps.LatLng(location);
+    updateDestinationDetails(latLng, place.id || "", place);
+    map.panTo(latLng);
+    map.setZoom(DESTINATION_SELECTION_ZOOM);
+    hideStatus();
+  }
+
+  async function selectDestinationSearchItem(item) {
+    if (item?.kind === "text-search") {
+      await selectTextSearchPlace(item.place);
+      return;
+    }
+    await selectAutocompletePrediction(item?.prediction);
+  }
+
   function destinationRouteValue() {
     const displayValue = destinationInput?.value.trim() || "";
     const selectedLabel = destinationInput?.dataset.selectedLabel || "";
@@ -556,6 +732,15 @@
     return selectedCoordinate && displayValue === selectedLabel
       ? selectedCoordinate
       : displayValue;
+  }
+
+  function destinationRouteRequestValue() {
+    const displayValue = destinationInput?.value.trim() || "";
+    const selectedLabel = destinationInput?.dataset.selectedLabel || "";
+    const selectedPlaceId = destinationInput?.dataset.selectedPlaceId || "";
+    return selectedPlaceId && displayValue === selectedLabel
+      ? { placeId: selectedPlaceId }
+      : destinationRouteValue();
   }
 
   function setOptionalDestinationText(element, text) {
@@ -811,6 +996,11 @@
     destinationInput.value = coordinate;
     destinationInput.dataset.selectedCoordinate = coordinate;
     destinationInput.dataset.selectedLabel = coordinate;
+    if (selectedPlaceId) {
+      destinationInput.dataset.selectedPlaceId = selectedPlaceId;
+    } else {
+      delete destinationInput.dataset.selectedPlaceId;
+    }
     updateRouteEndpointsSummary();
     updateRouteInfoEmpty();
     showDestinationPanel(displayCoordinate, coordinate);
@@ -858,6 +1048,7 @@
     destinationInput.value = "";
     delete destinationInput.dataset.selectedCoordinate;
     delete destinationInput.dataset.selectedLabel;
+    delete destinationInput.dataset.selectedPlaceId;
     destinationName.textContent = "選択した目的地";
     destinationAddress.textContent = "地図上の地点";
     resetDestinationPlaceDetails();
@@ -3961,6 +4152,7 @@ followToggle.checked = true;
     const originText = originInput.value.trim();
     const destinationDisplayText = destinationInput.value.trim();
     const destinationText = destinationRouteValue();
+    const destinationRequestValue = destinationRouteRequestValue();
     const waypointValues = getWaypointValues();
     const selectedPreference =
       document.getElementById("routeMode")?.value || "local";
@@ -4068,7 +4260,7 @@ followToggle.checked = true;
         modes.map(async (mode) => ({
           mode,
           response: await directionsPromise(
-            routeRequest(origin, destinationText, waypoints, mode)
+            routeRequest(origin, destinationRequestValue, waypoints, mode)
           )
         }))
       );
@@ -5021,21 +5213,27 @@ followToggle.checked = true;
       hideDestinationSuggestions();
       return;
     }
-    if (event.key === "Enter" && autocompletePredictions.length) {
+    if (
+      event.key === "Enter" &&
+      autocompletePredictions.length &&
+      autocompleteActiveIndex >= 0
+    ) {
       event.preventDefault();
-      const prediction = autocompletePredictions[
-        autocompleteActiveIndex >= 0 ? autocompleteActiveIndex : 0
-      ];
-      void selectAutocompletePrediction(prediction);
+      const prediction = autocompletePredictions[autocompleteActiveIndex];
+      void selectDestinationSearchItem(prediction);
       return;
     }
-    if (event.key === "Enter") searchRoute();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void searchDestinationByText();
+    }
   });
 
   destinationInput?.addEventListener("input", () => {
     destinationSelectionId += 1;
     delete destinationInput.dataset.selectedCoordinate;
     delete destinationInput.dataset.selectedLabel;
+    delete destinationInput.dataset.selectedPlaceId;
     updateRouteEndpointsSummary();
     scheduleDestinationSuggestions();
   });

@@ -24,6 +24,8 @@ button:disabled{cursor:default;opacity:.5}
 .destination-suggestion-secondary{display:flex;gap:7px;min-width:0;color:#5f6368;font-size:.8rem;line-height:1.35}
 .destination-suggestion-address{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .destination-suggestion-distance{flex:0 0 auto;color:#1a73e8;font-weight:700}
+.destination-suggestion-category{overflow:hidden;color:#5f6368;font-size:.74rem;line-height:1.25;text-overflow:ellipsis;white-space:nowrap}
+.destination-suggestion.is-search-result .destination-suggestion-icon{background:#e8f0fe;color:#0b57d0}
 
 .bottom-sheet{position:fixed;z-index:35;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));max-width:620px;margin:auto;padding:8px 14px 14px;border-radius:20px;background:rgba(255,255,255,.98);box-shadow:0 4px 22px rgba(60,64,67,.38)}
 .sheet-handle{width:42px;height:4px;margin:0 auto 9px;border-radius:999px;background:#bdc1c6}
