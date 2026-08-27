@@ -9,9 +9,13 @@ button:disabled{cursor:default;opacity:.5}
 .legacy-controls{display:none!important}
 .visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
 
-.search-bar{position:fixed;z-index:45;top:max(10px,env(safe-area-inset-top));left:10px;right:10px;display:grid;grid-template-columns:34px minmax(0,1fr);align-items:center;min-height:56px;padding:6px 10px;border-radius:18px;background:rgba(255,255,255,.98);box-shadow:0 2px 12px rgba(60,64,67,.32)}
+.search-bar{position:fixed;z-index:45;top:max(10px,env(safe-area-inset-top));left:10px;right:10px;display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;min-height:56px;padding:6px 8px 6px 10px;border-radius:18px;background:rgba(255,255,255,.98);box-shadow:0 2px 12px rgba(60,64,67,.32)}
 .search-icon{color:#5f6368;font-size:1.8rem;line-height:1;text-align:center}
 .search-bar input{width:100%;min-width:0;height:44px;border:0;outline:0;background:transparent;font-size:1rem}
+.search-bar input::-webkit-search-cancel-button{display:none}
+.search-clear-button{display:flex;width:44px;height:44px;align-items:center;justify-content:center;border-radius:50%;background:transparent;color:#5f6368;font-size:1.55rem;line-height:1}
+.search-clear-button:hover,.search-clear-button:active{background:#f1f3f4;color:#202124}
+.search-clear-button:focus-visible{outline:3px solid rgba(26,115,232,.28);outline-offset:-2px}
 .search-bar.is-navigation-hidden{display:none}
 .destination-suggestions{position:absolute;top:calc(100% + 8px);left:0;right:0;max-height:min(56vh,430px);overflow-y:auto;overscroll-behavior:contain;border-radius:16px;background:rgba(255,255,255,.99);box-shadow:0 5px 22px rgba(60,64,67,.38)}
 .destination-suggestion{display:grid;width:100%;min-height:64px;grid-template-columns:36px minmax(0,1fr);gap:9px;align-items:center;padding:9px 14px;border-bottom:1px solid #edf0f2;background:transparent;color:#202124;text-align:left}

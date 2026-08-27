@@ -94,6 +94,7 @@
   const closePanelButton = $("closePanelButton");
   const originInput = $("originInput");
   const destinationInput = $("destinationInput");
+  const searchClearButton = $("searchClearButton");
   const destinationSuggestions = $("destinationSuggestions");
   const routeEndpointsSummary = $("routeEndpointsSummary");
   const useCurrentLocationButton = $("useCurrentLocationButton");
@@ -355,6 +356,11 @@
     if (destinationSuggestions) destinationSuggestions.hidden = true;
     destinationInput?.setAttribute("aria-expanded", "false");
     destinationInput?.removeAttribute("aria-activedescendant");
+  }
+
+  function updateSearchClearButtonVisibility() {
+    if (!searchClearButton || !destinationInput) return;
+    searchClearButton.hidden = !destinationInput.value;
   }
 
   function cancelDestinationSuggestions(resetSession = true) {
@@ -745,6 +751,24 @@
     searchResultLabelsOverlay = null;
   }
 
+  function clearDestinationSearchUi() {
+    if (!destinationInput) return;
+    const hasSelectedDestination = Boolean(
+      destinationInput.dataset.selectedCoordinate
+    );
+    cancelDestinationSuggestions();
+    clearSearchResultMap();
+    destinationInput.value = "";
+    if (hasSelectedDestination) {
+      destinationInput.dataset.searchCleared = "true";
+    } else {
+      delete destinationInput.dataset.searchCleared;
+    }
+    updateSearchClearButtonVisibility();
+    hideStatus();
+    destinationInput.focus();
+  }
+
   function createSearchResultLabelsOverlay(items) {
     const overlay = new google.maps.OverlayView();
     const labels = [];
@@ -1062,7 +1086,8 @@
     const selectedCoordinate =
       destinationInput?.dataset.selectedCoordinate || "";
 
-    return selectedCoordinate && displayValue === selectedLabel
+    return selectedCoordinate &&
+      (displayValue === selectedLabel || !displayValue)
       ? selectedCoordinate
       : displayValue;
   }
@@ -1071,7 +1096,8 @@
     const displayValue = destinationInput?.value.trim() || "";
     const selectedLabel = destinationInput?.dataset.selectedLabel || "";
     const selectedPlaceId = destinationInput?.dataset.selectedPlaceId || "";
-    return selectedPlaceId && displayValue === selectedLabel
+    return selectedPlaceId &&
+      (displayValue === selectedLabel || !displayValue)
       ? { placeId: selectedPlaceId }
       : destinationRouteValue();
   }
@@ -1241,9 +1267,12 @@
       const displayName = place.displayName?.text || place.displayName || "";
       if (displayName) {
         destinationName.textContent = displayName;
-        destinationInput.value = displayName;
         destinationInput.dataset.selectedLabel = displayName;
-        updateRouteEndpointsSummary();
+        if (destinationInput.dataset.searchCleared !== "true") {
+          destinationInput.value = displayName;
+          updateRouteEndpointsSummary();
+        }
+        updateSearchClearButtonVisibility();
       }
       if (place.formattedAddress) destinationAddress.textContent = place.formattedAddress;
       destinationMarker?.setTitle(displayName || place.formattedAddress || "目的地");
@@ -1328,6 +1357,7 @@
     cancelPendingRouteSearch();
     clearDisplayedRoute(false);
     destinationInput.value = coordinate;
+    delete destinationInput.dataset.searchCleared;
     destinationInput.dataset.selectedCoordinate = coordinate;
     destinationInput.dataset.selectedLabel = coordinate;
     if (selectedPlaceId) {
@@ -1335,6 +1365,7 @@
     } else {
       delete destinationInput.dataset.selectedPlaceId;
     }
+    updateSearchClearButtonVisibility();
     updateRouteEndpointsSummary();
     updateRouteInfoEmpty();
     showDestinationPanel(displayCoordinate, coordinate);
@@ -1384,6 +1415,8 @@
     delete destinationInput.dataset.selectedCoordinate;
     delete destinationInput.dataset.selectedLabel;
     delete destinationInput.dataset.selectedPlaceId;
+    delete destinationInput.dataset.searchCleared;
+    updateSearchClearButtonVisibility();
     destinationName.textContent = "選択した目的地";
     destinationAddress.textContent = "地図上の地点";
     resetDestinationPlaceDetails();
@@ -4372,6 +4405,8 @@ followToggle.checked = true;
 
     originInput.value = "現在地";
     destinationInput.value = destination;
+    delete destinationInput.dataset.searchCleared;
+    updateSearchClearButtonVisibility();
     updateRouteEndpointsSummary();
     if (mode && ["highway", "partial", "local"].includes(mode)) {
       selectedRouteMode = mode;
@@ -4485,14 +4520,17 @@ followToggle.checked = true;
     }
 
     const originText = originInput.value.trim();
-    const destinationDisplayText = destinationInput.value.trim();
+    const destinationDisplayText =
+      destinationInput.value.trim() ||
+      destinationInput.dataset.selectedLabel ||
+      "";
     const destinationText = destinationRouteValue();
     const destinationRequestValue = destinationRouteRequestValue();
     const waypointValues = getWaypointValues();
     const selectedPreference =
       document.getElementById("routeMode")?.value || "local";
 
-    if (!originText || !destinationDisplayText) {
+    if (!originText || !destinationText) {
       showStatus("出発地と目的地を入力してください");
       return;
     }
@@ -5516,6 +5554,7 @@ followToggle.checked = true;
   destinationMapButton?.addEventListener("click", () => {
     startMapSelection(destinationInput, "目的地", destinationMapButton);
   });
+  searchClearButton?.addEventListener("click", clearDestinationSearchUi);
   clearDestinationButton?.addEventListener("click", clearDestination);
   clearRouteDestinationButton?.addEventListener("click", clearDestination);
   routeButton?.addEventListener("click", searchRoute);
@@ -5567,9 +5606,11 @@ followToggle.checked = true;
   destinationInput?.addEventListener("input", () => {
     destinationSelectionId += 1;
     clearSearchResultMap();
+    delete destinationInput.dataset.searchCleared;
     delete destinationInput.dataset.selectedCoordinate;
     delete destinationInput.dataset.selectedLabel;
     delete destinationInput.dataset.selectedPlaceId;
+    updateSearchClearButtonVisibility();
     updateRouteEndpointsSummary();
     scheduleDestinationSuggestions();
   });
@@ -5605,6 +5646,7 @@ followToggle.checked = true;
   updateWaypointDisplay();
   updateRouteInfoEmpty();
   loadRouteFromUrl();
+  updateSearchClearButtonVisibility();
   updateRouteEndpointsSummary();
 
   loadGoogleMaps();
