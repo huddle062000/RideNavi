@@ -16,7 +16,8 @@
 
     <header id="searchBar" class="search-bar">
       <span class="search-icon" aria-hidden="true">⌕</span>
-      <input id="destinationInput" type="search" placeholder="目的地を検索" autocomplete="off" aria-label="目的地を検索">
+      <input id="destinationInput" type="search" placeholder="目的地を検索" autocomplete="off" aria-label="目的地を検索" aria-autocomplete="list" aria-controls="destinationSuggestions" aria-expanded="false">
+      <div id="destinationSuggestions" class="destination-suggestions" role="listbox" aria-label="目的地の検索候補" hidden></div>
     </header>
 
     <section id="destinationPanel" class="bottom-sheet destination-sheet" hidden aria-label="目的地とルート条件">
@@ -24,12 +25,12 @@
       <div class="destination-heading">
         <div class="destination-details">
           <strong id="destinationName">選択した目的地</strong>
+          <span id="destinationAddress" class="destination-address">地図上の地点</span>
           <span id="destinationCategory" class="destination-category" hidden></span>
           <span id="destinationBusinessInfo" class="destination-business-info" hidden></span>
         </div>
         <button id="clearDestinationButton" class="destination-close" type="button" aria-label="目的地を解除">×</button>
       </div>
-      <span id="destinationAddress" class="visually-hidden">地図上の地点</span>
       <fieldset class="road-mode-group">
         <legend>道路タイプ</legend>
         <label><input type="radio" name="destinationRouteMode" value="local" checked><span>一般道</span></label>

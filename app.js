@@ -10,6 +10,9 @@
   const AUTO_ROUTE_MAX_DURATION_RATIO = 1.3;
   const ROUTE_SEARCH_CACHE_LIMIT = 12;
   const LONG_PRESS_DELAY_MS = 550;
+  const AUTOCOMPLETE_DEBOUNCE_MS = 250;
+  const AUTOCOMPLETE_LOCATION_BIAS_METERS = 50000;
+  const DESTINATION_SELECTION_ZOOM = 16;
   const TOUCH_LONG_PRESS_MOVE_TOLERANCE_PX = 24;
   const MOUSE_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
   const PEN_LONG_PRESS_MOVE_TOLERANCE_PX = 18;
@@ -86,6 +89,7 @@
   const closePanelButton = $("closePanelButton");
   const originInput = $("originInput");
   const destinationInput = $("destinationInput");
+  const destinationSuggestions = $("destinationSuggestions");
   const routeEndpointsSummary = $("routeEndpointsSummary");
   const useCurrentLocationButton = $("useCurrentLocationButton");
   const addWaypointButton = $("addWaypointButton");
@@ -172,6 +176,12 @@
   let userMarker = null;
   let destinationMarker = null;
   let destinationSelectionId = 0;
+  let autocompleteRequestId = 0;
+  let autocompleteTimer = null;
+  let autocompleteSessionToken = null;
+  let autocompletePredictions = [];
+  let autocompleteActiveIndex = -1;
+  let placesLibraryPromise = null;
   let mapSelectionTarget = null;
   let accuracyCircle = null;
   let statusTimer = null;
@@ -272,6 +282,212 @@
     destinationAddress.textContent = address || "地図上の地点";
     destinationPanel.hidden = false;
     if (routeSummaryPanel) routeSummaryPanel.hidden = true;
+  }
+
+  function hideDestinationSuggestions() {
+    autocompletePredictions = [];
+    autocompleteActiveIndex = -1;
+    destinationSuggestions?.replaceChildren();
+    if (destinationSuggestions) destinationSuggestions.hidden = true;
+    destinationInput?.setAttribute("aria-expanded", "false");
+    destinationInput?.removeAttribute("aria-activedescendant");
+  }
+
+  function cancelDestinationSuggestions(resetSession = true) {
+    autocompleteRequestId += 1;
+    if (autocompleteTimer) {
+      clearTimeout(autocompleteTimer);
+      autocompleteTimer = null;
+    }
+    if (resetSession) autocompleteSessionToken = null;
+    hideDestinationSuggestions();
+  }
+
+  function formatSuggestionDistance(distanceMeters) {
+    if (!Number.isFinite(distanceMeters)) return "";
+    if (distanceMeters < 1000) {
+      return `${Math.max(1, Math.round(distanceMeters / 10) * 10)} m`;
+    }
+    const kilometers = distanceMeters / 1000;
+    return `${kilometers < 10 ? kilometers.toFixed(1) : Math.round(kilometers)} km`;
+  }
+
+  function updateAutocompleteActiveItem(nextIndex) {
+    if (!autocompletePredictions.length) return;
+    autocompleteActiveIndex =
+      (nextIndex + autocompletePredictions.length) % autocompletePredictions.length;
+    const buttons = destinationSuggestions?.querySelectorAll(
+      ".destination-suggestion"
+    ) || [];
+    buttons.forEach((button, index) => {
+      const isActive = index === autocompleteActiveIndex;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-selected", String(isActive));
+      if (isActive) {
+        destinationInput?.setAttribute("aria-activedescendant", button.id);
+        button.scrollIntoView({ block: "nearest" });
+      }
+    });
+  }
+
+  function renderDestinationSuggestions(predictions) {
+    if (!destinationSuggestions || !destinationInput) return;
+    autocompletePredictions = predictions;
+    autocompleteActiveIndex = -1;
+    destinationSuggestions.replaceChildren();
+
+    predictions.forEach((prediction, index) => {
+      const button = document.createElement("button");
+      const icon = document.createElement("span");
+      const text = document.createElement("span");
+      const main = document.createElement("span");
+      const secondary = document.createElement("span");
+      const address = document.createElement("span");
+      const distance = document.createElement("span");
+      const mainText = prediction.mainText?.text || prediction.text?.text || "候補";
+      const secondaryText = prediction.secondaryText?.text || "";
+      const distanceText = formatSuggestionDistance(prediction.distanceMeters);
+
+      button.type = "button";
+      button.id = `destinationSuggestion${index}`;
+      button.className = "destination-suggestion";
+      button.setAttribute("role", "option");
+      button.setAttribute("aria-selected", "false");
+      button.setAttribute(
+        "aria-label",
+        [mainText, secondaryText, distanceText].filter(Boolean).join("、")
+      );
+      icon.className = "destination-suggestion-icon";
+      icon.textContent = "⌖";
+      icon.setAttribute("aria-hidden", "true");
+      text.className = "destination-suggestion-text";
+      main.className = "destination-suggestion-main";
+      main.textContent = mainText;
+      secondary.className = "destination-suggestion-secondary";
+      address.className = "destination-suggestion-address";
+      address.textContent = secondaryText;
+      distance.className = "destination-suggestion-distance";
+      distance.textContent = distanceText;
+      secondary.append(address, distance);
+      text.append(main, secondary);
+      button.append(icon, text);
+      button.addEventListener("click", () => {
+        void selectAutocompletePrediction(prediction);
+      });
+      destinationSuggestions.appendChild(button);
+    });
+
+    destinationSuggestions.hidden = predictions.length === 0;
+    destinationInput.setAttribute("aria-expanded", String(predictions.length > 0));
+  }
+
+  async function autocompletePlacesLibrary() {
+    if (!placesLibraryPromise) {
+      placesLibraryPromise = google.maps.importLibrary("places");
+    }
+    return placesLibraryPromise;
+  }
+
+  function autocompleteRequestLocation() {
+    const point = getCurrentLatLng();
+    if (point) return point;
+    const center = map?.getCenter();
+    return center ? { lat: center.lat(), lng: center.lng() } : DEFAULT_CENTER;
+  }
+
+  async function requestDestinationSuggestions(query, requestId) {
+    try {
+      const { AutocompleteSessionToken, AutocompleteSuggestion } =
+        await autocompletePlacesLibrary();
+      if (requestId !== autocompleteRequestId) return;
+      if (!autocompleteSessionToken) {
+        autocompleteSessionToken = new AutocompleteSessionToken();
+      }
+      const location = autocompleteRequestLocation();
+      const request = {
+        input: query,
+        language: "ja",
+        region: "jp",
+        includedRegionCodes: ["jp"],
+        sessionToken: autocompleteSessionToken,
+        locationBias: {
+          center: location,
+          radius: AUTOCOMPLETE_LOCATION_BIAS_METERS
+        }
+      };
+      if (currentPosition) request.origin = location;
+
+      const { suggestions } =
+        await AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
+      if (
+        requestId !== autocompleteRequestId ||
+        destinationInput?.value.trim() !== query
+      ) {
+        return;
+      }
+      renderDestinationSuggestions(
+        suggestions
+          .map((suggestion) => suggestion.placePrediction)
+          .filter(Boolean)
+          .slice(0, 5)
+      );
+    } catch (error) {
+      if (requestId !== autocompleteRequestId) return;
+      console.error("[Ride Navi] 検索候補の取得に失敗しました", error);
+      hideDestinationSuggestions();
+      showStatus("検索候補を取得できませんでした", true);
+    }
+  }
+
+  function scheduleDestinationSuggestions() {
+    const query = destinationInput?.value.trim() || "";
+    const requestId = ++autocompleteRequestId;
+    if (autocompleteTimer) clearTimeout(autocompleteTimer);
+    autocompleteTimer = null;
+
+    if (!query || navigationActive || !map) {
+      if (!query) autocompleteSessionToken = null;
+      hideDestinationSuggestions();
+      return;
+    }
+
+    autocompleteTimer = setTimeout(() => {
+      autocompleteTimer = null;
+      void requestDestinationSuggestions(query, requestId);
+    }, AUTOCOMPLETE_DEBOUNCE_MS);
+  }
+
+  async function selectAutocompletePrediction(prediction) {
+    if (!prediction || navigationActive) return;
+    const selectionRequestId = ++autocompleteRequestId;
+    if (autocompleteTimer) clearTimeout(autocompleteTimer);
+    autocompleteTimer = null;
+    hideDestinationSuggestions();
+    destinationInput?.blur();
+
+    try {
+      const place = prediction.toPlace();
+      await place.fetchFields({
+        fields: [
+          "displayName",
+          "formattedAddress",
+          "location",
+          "primaryTypeDisplayName"
+        ]
+      });
+      if (selectionRequestId !== autocompleteRequestId || !place.location) return;
+
+      autocompleteSessionToken = null;
+      updateDestinationDetails(place.location, prediction.placeId, place);
+      map.panTo(place.location);
+      map.setZoom(DESTINATION_SELECTION_ZOOM);
+      hideStatus();
+    } catch (error) {
+      if (selectionRequestId !== autocompleteRequestId) return;
+      autocompleteSessionToken = null;
+      console.error("[Ride Navi] 検索候補の選択に失敗しました", error);
+      showStatus("目的地の情報を取得できませんでした", true);
+    }
   }
 
   function destinationRouteValue() {
@@ -425,23 +641,26 @@
     return `${status}・本日${todaySchedule}`;
   }
 
-  async function loadDestinationPlaceDetails(placeId, selectionId) {
+  async function loadDestinationPlaceDetails(placeId, selectionId, selectedPlace = null) {
     if (!placeId || !google.maps.importLibrary) return;
 
     try {
-      const { Place } = await google.maps.importLibrary("places");
-      const place = new Place({
-        id: placeId,
-        requestedLanguage: "ja",
-        requestedRegion: "JP"
-      });
-      await place.fetchFields({
-        fields: [
-          "displayName",
-          "formattedAddress",
-          "primaryTypeDisplayName"
-        ]
-      });
+      let place = selectedPlace;
+      if (!place) {
+        const { Place } = await autocompletePlacesLibrary();
+        place = new Place({
+          id: placeId,
+          requestedLanguage: "ja",
+          requestedRegion: "JP"
+        });
+        await place.fetchFields({
+          fields: [
+            "displayName",
+            "formattedAddress",
+            "primaryTypeDisplayName"
+          ]
+        });
+      }
       if (selectionId !== destinationSelectionId) return;
 
       const displayName = place.displayName?.text || place.displayName || "";
@@ -522,7 +741,8 @@
     }
   }
 
-  function updateDestinationDetails(latLng, selectedPlaceId = "") {
+  function updateDestinationDetails(latLng, selectedPlaceId = "", selectedPlace = null) {
+    cancelDestinationSuggestions();
     const selectionId = ++destinationSelectionId;
     const lat = latLng.lat().toFixed(6);
     const lng = latLng.lng().toFixed(6);
@@ -552,7 +772,7 @@
     destinationMarker.setTitle(displayCoordinate);
 
     if (selectedPlaceId) {
-      void loadDestinationPlaceDetails(selectedPlaceId, selectionId);
+      void loadDestinationPlaceDetails(selectedPlaceId, selectionId, selectedPlace);
       return;
     }
 
@@ -572,6 +792,7 @@
 
   function clearDestination() {
     destinationSelectionId += 1;
+    cancelDestinationSuggestions();
     cancelPendingRouteSearch();
     cancelMapSelection();
     clearDisplayedRoute(false);
@@ -4363,13 +4584,50 @@ followToggle.checked = true;
   originInput?.addEventListener("input", updateRouteEndpointsSummary);
 
   destinationInput?.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" && autocompletePredictions.length) {
+      event.preventDefault();
+      updateAutocompleteActiveItem(autocompleteActiveIndex + 1);
+      return;
+    }
+    if (event.key === "ArrowUp" && autocompletePredictions.length) {
+      event.preventDefault();
+      updateAutocompleteActiveItem(autocompleteActiveIndex - 1);
+      return;
+    }
+    if (event.key === "Escape") {
+      hideDestinationSuggestions();
+      return;
+    }
+    if (event.key === "Enter" && autocompletePredictions.length) {
+      event.preventDefault();
+      const prediction = autocompletePredictions[
+        autocompleteActiveIndex >= 0 ? autocompleteActiveIndex : 0
+      ];
+      void selectAutocompletePrediction(prediction);
+      return;
+    }
     if (event.key === "Enter") searchRoute();
   });
 
   destinationInput?.addEventListener("input", () => {
+    destinationSelectionId += 1;
     delete destinationInput.dataset.selectedCoordinate;
     delete destinationInput.dataset.selectedLabel;
     updateRouteEndpointsSummary();
+    scheduleDestinationSuggestions();
+  });
+
+  destinationInput?.addEventListener("focus", () => {
+    if (
+      destinationInput.value.trim() &&
+      !destinationInput.dataset.selectedCoordinate
+    ) {
+      scheduleDestinationSuggestions();
+    }
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!$("searchBar")?.contains(event.target)) hideDestinationSuggestions();
   });
 
   routeModeInputs().forEach((input) => {
