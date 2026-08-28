@@ -129,6 +129,10 @@ body.is-navigating #rideNaviHeadingControl{z-index:50!important;bottom:calc(200p
 
 @media(min-width:700px){.search-bar{left:50%;width:min(620px,calc(100vw - 20px));transform:translateX(-50%)}.navigation-guidance{left:50%;right:auto;width:min(520px,calc(100vw - 16px));transform:translateX(-50%)}.navigation-bottom{left:50%;right:auto;width:min(620px,calc(100vw - 16px));transform:translateX(-50%)}}
 @media(max-width:699px){.destination-sheet{left:0;right:0;bottom:0;max-width:none;margin:0;padding:8px 16px calc(16px + env(safe-area-inset-bottom));border-radius:26px 26px 0 0}}
+@media(orientation:portrait) and (max-width:699px){
+  body:not(.is-navigating):has(#destinationPanel:not([hidden])) #rideNaviHeadingControl{bottom:calc(390px + env(safe-area-inset-bottom))!important}
+  body.is-navigating #rideNaviHeadingControl{bottom:calc(320px + env(safe-area-inset-bottom))!important}
+}
 @media(max-width:380px){.destination-sheet{padding-right:12px;padding-left:12px}.destination-heading{grid-template-columns:minmax(0,1fr) 50px;gap:8px}.destination-details>strong{font-size:1.18rem}.destination-close{width:50px;height:50px}.road-mode-group{gap:5px}.road-mode-group span{font-size:.78rem}.destination-actions{gap:5px}.destination-actions button{padding:0 5px;font-size:.83rem}.navigation-guidance{padding-right:9px;padding-left:9px}.navigation-guidance-primary{grid-template-columns:66px minmax(0,1fr);gap:9px}.navigation-maneuver-icon{width:66px;height:66px}.navigation-maneuver-icon svg{width:60px;height:60px}.navigation-metrics strong{font-size:1rem}}
 @media(max-width:380px){.destination-map-label{max-width:150px;padding:4px 7px;font-size:.72rem}}
 @media(max-width:380px){.route-map-label{min-width:70px;padding:6px 9px 7px}.route-map-label strong{font-size:.94rem}.route-map-label span{font-size:.68rem}}
