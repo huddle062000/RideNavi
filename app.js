@@ -18,7 +18,8 @@
   const TEXT_SEARCH_MAX_RESULTS = 10;
   const SEARCH_MAP_MAX_RESULTS = 8;
   const SEARCH_MAP_MAX_ZOOM = 15;
-  const DESTINATION_SELECTION_ZOOM = 16;
+  const DESTINATION_SELECTION_ZOOM = 15;
+  const DESTINATION_MARKER_Z_INDEX = 500;
   const TOUCH_LONG_PRESS_MOVE_TOLERANCE_PX = 24;
   const MOUSE_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
   const PEN_LONG_PRESS_MOVE_TOLERANCE_PX = 18;
@@ -197,6 +198,9 @@
   let currentPosition = null;
   let userMarker = null;
   let destinationMarker = null;
+  let destinationLabelOverlay = null;
+  let destinationLabelElement = null;
+  let destinationLabelText = "";
   let destinationSelectionId = 0;
   let autocompleteRequestId = 0;
   let autocompleteTimer = null;
@@ -660,8 +664,7 @@
 
       autocompleteSessionToken = null;
       updateDestinationDetails(place.location, prediction.placeId, place);
-      map.panTo(place.location);
-      map.setZoom(DESTINATION_SELECTION_ZOOM);
+      focusSelectedDestination();
       hideStatus();
     } catch (error) {
       if (selectionRequestId !== autocompleteRequestId) return;
@@ -750,6 +753,125 @@
     searchResultMarkers = [];
     searchResultLabelsOverlay?.setMap(null);
     searchResultLabelsOverlay = null;
+  }
+
+  function clearDestinationMapLabel() {
+    destinationLabelOverlay?.setMap(null);
+    destinationLabelOverlay = null;
+    destinationLabelElement = null;
+    destinationLabelText = "";
+  }
+
+  function updateDestinationMapLabelText(text) {
+    destinationLabelText = String(text || "目的地").trim() || "目的地";
+    if (!destinationLabelElement) return;
+    destinationLabelElement.textContent = destinationLabelText;
+    destinationLabelElement.title = destinationLabelText;
+  }
+
+  function showDestinationMapLabel(position, text) {
+    clearDestinationMapLabel();
+    updateDestinationMapLabelText(text);
+
+    const overlay = new google.maps.OverlayView();
+    let label = null;
+
+    overlay.onAdd = () => {
+      label = document.createElement("div");
+      label.className = "search-result-map-label destination-map-label";
+      label.textContent = destinationLabelText;
+      label.title = destinationLabelText;
+      label.setAttribute("aria-hidden", "true");
+      overlay.getPanes().floatPane.appendChild(label);
+      destinationLabelElement = label;
+    };
+
+    overlay.draw = () => {
+      const point = overlay.getProjection().fromLatLngToDivPixel(position);
+      if (!point || !label) return;
+      label.style.left = `${point.x}px`;
+      label.style.top = `${point.y}px`;
+    };
+
+    overlay.onRemove = () => {
+      label?.remove();
+      if (destinationLabelElement === label) destinationLabelElement = null;
+      label = null;
+    };
+
+    destinationLabelOverlay = overlay;
+    overlay.setMap(map);
+  }
+
+  function destinationMarkerIcon() {
+    return {
+      path: "M0-16C-7.5-16-12-10.4-12-4c0 9 12 20 12 20S12 5 12-4C12-10.4 7.5-16 0-16Z",
+      fillColor: "#d93025",
+      fillOpacity: 1,
+      strokeColor: "#ffffff",
+      strokeWeight: 2.5,
+      scale: 1.25,
+      anchor: new google.maps.Point(0, 16)
+    };
+  }
+
+  function adjustDestinationCameraForPanel(selectionId) {
+    if (
+      !map ||
+      selectionId !== destinationSelectionId ||
+      navigationActive ||
+      destinationPanel?.hidden
+    ) {
+      return;
+    }
+
+    const projection = map.getProjection?.();
+    const markerPosition = destinationMarker?.getPosition?.();
+    const zoom = map.getZoom?.();
+    if (!projection || !markerPosition || !Number.isFinite(zoom)) return;
+
+    const mapRect = map.getDiv().getBoundingClientRect();
+    const searchRect = $("searchBar")?.getBoundingClientRect();
+    const panelBottom = Number.parseFloat(
+      window.getComputedStyle(destinationPanel).bottom
+    );
+    const visibleTop = Math.max(
+      12,
+      searchRect ? searchRect.bottom - mapRect.top + 12 : 12
+    );
+    const visibleBottom = Math.min(
+      mapRect.height - 12,
+      mapRect.height -
+        destinationPanel.offsetHeight -
+        (Number.isFinite(panelBottom) ? panelBottom : 0) -
+        12
+    );
+    if (visibleBottom <= visibleTop) return;
+
+    const targetY = visibleTop + (visibleBottom - visibleTop) * 0.5;
+    const markerWorldPoint = projection.fromLatLngToPoint(markerPosition);
+    if (!markerWorldPoint) return;
+
+    const screenOffset = targetY - mapRect.height * 0.5;
+    const worldOffset = screenOffset / 2 ** zoom;
+    const headingRadians = ((map.getHeading?.() || 0) * Math.PI) / 180;
+    const cameraCenter = projection.fromPointToLatLng(
+      new google.maps.Point(
+        markerWorldPoint.x + Math.sin(headingRadians) * worldOffset,
+        markerWorldPoint.y - Math.cos(headingRadians) * worldOffset
+      )
+    );
+    if (cameraCenter) map.setCenter(cameraCenter);
+  }
+
+  function focusSelectedDestination() {
+    if (!map || navigationActive) return;
+    const selectionId = destinationSelectionId;
+    map.setZoom(DESTINATION_SELECTION_ZOOM);
+    adjustDestinationCameraForPanel(selectionId);
+    setTimeout(() => {
+      adjustDestinationCameraForPanel(selectionId);
+    }, 280);
   }
 
   function clearDestinationSearchUi() {
@@ -1060,8 +1182,7 @@
     autocompleteSessionToken = null;
     const latLng = new google.maps.LatLng(location);
     updateDestinationDetails(latLng, place.id || "", place);
-    map.panTo(latLng);
-    map.setZoom(DESTINATION_SELECTION_ZOOM);
+    focusSelectedDestination();
     hideStatus();
   }
 
@@ -1268,6 +1389,7 @@
       const displayName = place.displayName?.text || place.displayName || "";
       if (displayName) {
         destinationName.textContent = displayName;
+        updateDestinationMapLabelText(displayName);
         destinationInput.dataset.selectedLabel = displayName;
         if (destinationInput.dataset.searchCleared !== "true") {
           destinationInput.value = displayName;
@@ -1355,6 +1477,8 @@
     const coordinate = `${lat},${lng}`;
     const displayCoordinate =
       `${latLng.lat().toFixed(5)}, ${latLng.lng().toFixed(5)}`;
+    const selectedDisplayName =
+      selectedPlace?.displayName?.text || selectedPlace?.displayName || "目的地";
     cancelPendingRouteSearch();
     clearDisplayedRoute(false);
     destinationInput.value = coordinate;
@@ -1377,12 +1501,17 @@
         map,
         position: latLng,
         title: "目的地",
+        icon: destinationMarkerIcon(),
+        zIndex: DESTINATION_MARKER_Z_INDEX,
         animation: google.maps.Animation.DROP
       });
     } else {
       destinationMarker.setPosition(latLng);
+      destinationMarker.setIcon(destinationMarkerIcon());
+      destinationMarker.setZIndex(DESTINATION_MARKER_Z_INDEX);
     }
     destinationMarker.setTitle(displayCoordinate);
+    showDestinationMapLabel(latLng, selectedDisplayName);
 
     if (selectedPlaceId) {
       void loadDestinationPlaceDetails(selectedPlaceId, selectionId, selectedPlace);
@@ -1410,6 +1539,7 @@
     cancelMapSelection();
     clearDisplayedRoute(false);
     clearSearchResultMap();
+    clearDestinationMapLabel();
     destinationMarker?.setMap(null);
     destinationMarker = null;
     destinationInput.value = "";
