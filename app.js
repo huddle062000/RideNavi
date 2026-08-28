@@ -96,6 +96,7 @@
   const closePanelButton = $("closePanelButton");
   const originInput = $("originInput");
   const destinationInput = $("destinationInput");
+  const destinationSearchButton = $("destinationSearchButton");
   const searchClearButton = $("searchClearButton");
   const destinationSuggestions = $("destinationSuggestions");
   const routeEndpointsSummary = $("routeEndpointsSummary");
@@ -1037,9 +1038,13 @@
     };
   }
 
-  function showTextSearchResultsOnMap(results) {
+  function showTextSearchResultsOnMap(
+    results,
+    preserveViewport = false,
+    searchBounds = null
+  ) {
     if (!map || navigationActive) return;
-    const initialBounds = map.getBounds();
+    const initialBounds = searchBounds || map.getBounds();
     const items = (results || [])
       .map((item) => {
         const location = placeLocationLiteral(item.place);
@@ -1053,7 +1058,7 @@
       .slice(0, SEARCH_MAP_MAX_RESULTS);
     if (!items.length) {
       showStatus("地図に表示できる場所がありませんでした", true);
-      return;
+      return false;
     }
 
     autocompleteRequestId += 1;
@@ -1087,6 +1092,11 @@
     });
     searchResultLabelsOverlay = createSearchResultLabelsOverlay(items);
 
+    if (preserveViewport) {
+      hideStatus();
+      return true;
+    }
+
     if (items.length === 1) {
       map.panTo(items[0].location);
       map.setZoom(SEARCH_MAP_MAX_ZOOM);
@@ -1103,12 +1113,19 @@
       });
     }
     hideStatus();
+    return true;
   }
 
-  async function searchDestinationByText(showOnMap = false) {
+  async function searchDestinationByText(
+    showOnMap = false,
+    preserveViewport = false
+  ) {
     const query = destinationInput?.value.trim() || "";
     if (!query || navigationActive || !map) return;
 
+    const searchBounds = showOnMap ? map.getBounds() : null;
+    const searchLocation = autocompleteRequestLocation();
+    const searchLocationBias = destinationSearchLocationBias();
     const searchRequestId = ++autocompleteRequestId;
     if (autocompleteTimer) clearTimeout(autocompleteTimer);
     autocompleteTimer = null;
@@ -1120,7 +1137,6 @@
 
     try {
       const { Place } = await autocompletePlacesLibrary();
-      const location = autocompleteRequestLocation();
       const { places } = await Place.searchByText({
         textQuery: query,
         fields: [
@@ -1132,7 +1148,7 @@
         ],
         language: "ja",
         region: "jp",
-        locationBias: destinationSearchLocationBias(),
+        locationBias: searchLocationBias,
         maxResultCount: TEXT_SEARCH_MAX_RESULTS
       });
       if (
@@ -1142,7 +1158,7 @@
         return;
       }
 
-      const results = textSearchResultItems(places || [], query, location);
+      const results = textSearchResultItems(places || [], query, searchLocation);
       if (!results.length) {
         hideDestinationSuggestions();
         showStatus("目的地が見つかりませんでした", true);
@@ -1151,7 +1167,12 @@
       }
 
       if (showOnMap) {
-        showTextSearchResultsOnMap(results);
+        const displayed = showTextSearchResultsOnMap(
+          results,
+          preserveViewport,
+          searchBounds
+        );
+        if (!displayed) return;
       } else {
         renderDestinationSuggestions([
           showSearchResultsItem(query, results),
@@ -5685,6 +5706,9 @@ followToggle.checked = true;
   });
   destinationMapButton?.addEventListener("click", () => {
     startMapSelection(destinationInput, "目的地", destinationMapButton);
+  });
+  destinationSearchButton?.addEventListener("click", () => {
+    void searchDestinationByText(true, true);
   });
   searchClearButton?.addEventListener("click", clearDestinationSearchUi);
   clearDestinationButton?.addEventListener("click", clearDestination);
