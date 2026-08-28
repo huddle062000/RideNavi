@@ -10,6 +10,13 @@
   const AUTO_ROUTE_OFFSET_RATIO = 0.08;
   const AUTO_ROUTE_MAX_DURATION_RATIO = 1.3;
   const ROUTE_SEARCH_CACHE_LIMIT = 12;
+  const ROUTE_TRAFFIC_CACHE_LIMIT = 6;
+  const ROUTE_TRAFFIC_CACHE_TTL_MS = 5 * 60 * 1000;
+  const ROUTE_TRAFFIC_FAILURE_CACHE_TTL_MS = 30000;
+  const ROUTE_TRAFFIC_REQUEST_TIMEOUT_MS = 12000;
+  const ROUTE_TRAFFIC_ENDPOINT_TOLERANCE_METERS = 150;
+  const ROUTE_TRAFFIC_DISTANCE_DIFFERENCE_LIMIT = 0.1;
+  const ROUTE_TRAFFIC_MINIMUM_COVERAGE = 0.9;
   const LONG_PRESS_DELAY_MS = 550;
   const AUTOCOMPLETE_DEBOUNCE_MS = 250;
   const AUTOCOMPLETE_LOCATION_BIAS_METERS = 25000;
@@ -224,6 +231,13 @@
   let selectedRouteMode = "local";
   let routePolylines = [];
   let routeLabelOverlays = [];
+  let trafficRoutePolylines = [];
+  let routesLibraryPromise = null;
+  let trafficRouteSelectionId = 0;
+  let activeTrafficRouteKey = "";
+  let suppressNextTrafficRouteDisplay = false;
+  const trafficRouteCache = new Map();
+  const pendingTrafficRouteRequests = new Map();
   let longPressTimer = null;
   let navigationOverviewActive = false;
   let landscapeLocationTogglePrimed = false;
@@ -275,6 +289,288 @@
     routePolylines = [];
     routeLabelOverlays.forEach((overlay) => overlay.setMap(null));
     routeLabelOverlays = [];
+  }
+
+  function clearTrafficRouteOverlays() {
+    trafficRoutePolylines.forEach((polyline) => polyline.setMap(null));
+    trafficRoutePolylines = [];
+  }
+
+  function cancelTrafficRouteDisplay() {
+    trafficRouteSelectionId += 1;
+    activeTrafficRouteKey = "";
+    clearTrafficRouteOverlays();
+  }
+
+  function trafficRouteCacheKey(candidate, route) {
+    return [
+      candidate.mode,
+      routeSignature(route),
+      routeShapeSortKey(route)
+    ].join("::");
+  }
+
+  function readTrafficRouteCache(cacheKey) {
+    const cached = trafficRouteCache.get(cacheKey);
+    if (!cached) return null;
+    if (cached.expiresAt <= Date.now()) {
+      trafficRouteCache.delete(cacheKey);
+      return null;
+    }
+
+    trafficRouteCache.delete(cacheKey);
+    trafficRouteCache.set(cacheKey, cached);
+    return cached.result;
+  }
+
+  function writeTrafficRouteCache(
+    cacheKey,
+    result,
+    ttl = ROUTE_TRAFFIC_CACHE_TTL_MS
+  ) {
+    trafficRouteCache.delete(cacheKey);
+    trafficRouteCache.set(cacheKey, {
+      result,
+      expiresAt: Date.now() + ttl
+    });
+
+    while (trafficRouteCache.size > ROUTE_TRAFFIC_CACHE_LIMIT) {
+      const oldestKey = trafficRouteCache.keys().next().value;
+      trafficRouteCache.delete(oldestKey);
+    }
+  }
+
+  function routeTrafficPoint(point) {
+    const latitude =
+      typeof point?.lat === "function" ? point.lat() : point?.lat;
+    const longitude =
+      typeof point?.lng === "function" ? point.lng() : point?.lng;
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return null;
+    }
+
+    return { lat: latitude, lng: longitude };
+  }
+
+  function routeTrafficPath(points) {
+    return Array.from(points || [], routeTrafficPoint).filter(Boolean);
+  }
+
+  function directionsRouteEndpoints(route) {
+    const firstLeg = route?.legs?.[0];
+    const lastLeg = route?.legs?.[route.legs.length - 1];
+    return {
+      origin: firstLeg?.start_location || route?.overview_path?.[0] || null,
+      destination:
+        lastLeg?.end_location || route?.overview_path?.at?.(-1) || null
+    };
+  }
+
+  function routesRequestIntermediates(route) {
+    return (route?.legs || []).slice(0, -1).map((leg) => ({
+      location: leg.end_location
+    }));
+  }
+
+  function trafficRouteMatch(directionsRoute, routesRoute) {
+    const directionsPath = routeOverviewPoints(directionsRoute);
+    const routesPath = routeTrafficPath(routesRoute?.path);
+
+    if (directionsPath.length < 2 || routesPath.length < 2) return null;
+
+    const directionsDistance = sumRouteTotals(directionsRoute).totalDistance;
+    const routesDistance = Number(routesRoute?.distanceMeters);
+    if (!Number.isFinite(routesDistance) || routesDistance <= 0) return null;
+
+    const originDistance = distanceBetweenMeters(
+      directionsPath[0],
+      routesPath[0]
+    );
+    const destinationDistance = distanceBetweenMeters(
+      directionsPath[directionsPath.length - 1],
+      routesPath[routesPath.length - 1]
+    );
+    const distanceDifference =
+      Math.abs(directionsDistance - routesDistance) /
+      Math.max(directionsDistance, routesDistance, 1);
+    const directionsCoverage = routePathCoverage(
+      directionsPath,
+      routesPath
+    );
+    const routesCoverage = routePathCoverage(routesPath, directionsPath);
+    const overlapRatio = Math.min(directionsCoverage, routesCoverage);
+
+    return {
+      originDistance,
+      destinationDistance,
+      distanceDifference,
+      directionsCoverage,
+      routesCoverage,
+      overlapRatio,
+      accepted:
+        originDistance <= ROUTE_TRAFFIC_ENDPOINT_TOLERANCE_METERS &&
+        destinationDistance <= ROUTE_TRAFFIC_ENDPOINT_TOLERANCE_METERS &&
+        distanceDifference <= ROUTE_TRAFFIC_DISTANCE_DIFFERENCE_LIMIT &&
+        directionsCoverage >= ROUTE_TRAFFIC_MINIMUM_COVERAGE &&
+        routesCoverage >= ROUTE_TRAFFIC_MINIMUM_COVERAGE
+    };
+  }
+
+  function trafficRouteSegments(routesRoute) {
+    return (routesRoute?.speedPaths || [])
+      .map((speedPath) => ({
+        speed: String(speedPath.speed || "").toUpperCase(),
+        path: routeTrafficPath(speedPath.path)
+      }))
+      .filter(({ speed, path }) =>
+        ["SLOW", "TRAFFIC_JAM"].includes(speed) && path.length >= 2
+      );
+  }
+
+  function drawTrafficRouteSegments(segments) {
+    clearTrafficRouteOverlays();
+
+    segments.forEach(({ speed, path }) => {
+      const polyline = new google.maps.Polyline({
+        map,
+        path,
+        strokeColor: speed === "TRAFFIC_JAM" ? "#d93025" : "#f9ab00",
+        strokeOpacity: 0.96,
+        strokeWeight: navigationActive ? 8 : 6,
+        zIndex: speed === "TRAFFIC_JAM" ? 241 : 240,
+        clickable: false
+      });
+      trafficRoutePolylines.push(polyline);
+    });
+  }
+
+  function loadRoutesLibrary() {
+    if (!routesLibraryPromise) {
+      routesLibraryPromise = google.maps.importLibrary("routes")
+        .catch((error) => {
+          routesLibraryPromise = null;
+          throw error;
+        });
+    }
+    return routesLibraryPromise;
+  }
+
+  function withTrafficRouteTimeout(promise) {
+    let timeoutId = null;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = window.setTimeout(() => {
+        reject(new Error("traffic-aware polyline request timed out"));
+      }, ROUTE_TRAFFIC_REQUEST_TIMEOUT_MS);
+    });
+
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    });
+  }
+
+  async function requestTrafficRoute(candidate, directionsRoute, cacheKey) {
+    const endpoints = directionsRouteEndpoints(directionsRoute);
+    const intermediates = routesRequestIntermediates(directionsRoute);
+    if (!endpoints.origin || !endpoints.destination) {
+      return { segments: [], matched: false };
+    }
+
+    const { Route } = await withTrafficRouteTimeout(loadRoutesLibrary());
+    const response = await withTrafficRouteTimeout(Route.computeRoutes({
+      origin: endpoints.origin,
+      destination: endpoints.destination,
+      intermediates,
+      travelMode: "DRIVING",
+      routingPreference: "TRAFFIC_AWARE_OPTIMAL",
+      extraComputations: ["TRAFFIC_ON_POLYLINE"],
+      routeModifiers: {
+        avoidHighways: false,
+        avoidTolls: candidate.mode === "local"
+      },
+      computeAlternativeRoutes: intermediates.length === 0,
+      polylineQuality: "HIGH_QUALITY",
+      region: "JP",
+      language: "ja",
+      fields: ["path", "speedPaths", "distanceMeters"]
+    }));
+
+    const matches = (response.routes || [])
+      .map((routesRoute) => ({
+        routesRoute,
+        match: trafficRouteMatch(directionsRoute, routesRoute)
+      }))
+      .filter(({ match }) => match?.accepted)
+      .sort((first, second) =>
+        second.match.overlapRatio - first.match.overlapRatio ||
+        first.match.distanceDifference - second.match.distanceDifference ||
+        (first.match.originDistance + first.match.destinationDistance) -
+          (second.match.originDistance + second.match.destinationDistance)
+      );
+    const selectedMatch = matches[0] || null;
+    const result = {
+      segments: selectedMatch
+        ? trafficRouteSegments(selectedMatch.routesRoute)
+        : [],
+      matched: Boolean(selectedMatch)
+    };
+    const slowCount = result.segments.filter(
+      ({ speed }) => speed === "SLOW"
+    ).length;
+    const jamCount = result.segments.filter(
+      ({ speed }) => speed === "TRAFFIC_JAM"
+    ).length;
+    console.info(
+      `[Ride Navi] traffic-aware polyline ${result.matched ? "matched" : "skipped"}` +
+      ` routes=${response.routes?.length || 0}` +
+      ` slow=${slowCount} jam=${jamCount}`
+    );
+
+    writeTrafficRouteCache(cacheKey, result);
+    return result;
+  }
+
+  async function showSelectedRouteTraffic(candidate, directionsRoute) {
+    const cacheKey = trafficRouteCacheKey(candidate, directionsRoute);
+    const selectionId = ++trafficRouteSelectionId;
+    activeTrafficRouteKey = cacheKey;
+    clearTrafficRouteOverlays();
+
+    try {
+      let result = readTrafficRouteCache(cacheKey);
+
+      if (!result) {
+        let request = pendingTrafficRouteRequests.get(cacheKey);
+        if (!request) {
+          request = requestTrafficRoute(candidate, directionsRoute, cacheKey)
+            .finally(() => pendingTrafficRouteRequests.delete(cacheKey));
+          pendingTrafficRouteRequests.set(cacheKey, request);
+        }
+        result = await request;
+      }
+
+      if (
+        selectionId !== trafficRouteSelectionId ||
+        activeTrafficRouteKey !== cacheKey
+      ) {
+        return;
+      }
+
+      if (result.matched) drawTrafficRouteSegments(result.segments);
+    } catch (error) {
+      if (
+        selectionId === trafficRouteSelectionId &&
+        activeTrafficRouteKey === cacheKey
+      ) {
+        clearTrafficRouteOverlays();
+      }
+      writeTrafficRouteCache(
+        cacheKey,
+        { segments: [], matched: false },
+        ROUTE_TRAFFIC_FAILURE_CACHE_TTL_MS
+      );
+      console.warn("[Ride Navi] traffic-aware polyline unavailable", error);
+    }
   }
 
   function updateRouteEndpointsSummary() {
@@ -2223,7 +2519,7 @@
             instruction,
             roadNames,
             path,
-            transition: highwayActive ? "青→赤" : "赤→青",
+            transition: highwayActive ? "青→紫" : "紫→青",
             appliesToCurrentStep,
             targetStep: appliesToCurrentStep
               ? step
@@ -2453,8 +2749,8 @@ function drawRouteOverlays() {
           map,
           path: segment.path,
           strokeColor: "#ffffff",
-          strokeOpacity: 0.98,
-          strokeWeight: 14,
+          strokeOpacity: navigationActive ? 0.98 : 0.55,
+          strokeWeight: navigationActive ? 14 : 11,
           zIndex: 190,
           clickable: true
         });
@@ -2467,8 +2763,8 @@ function drawRouteOverlays() {
         map,
         path: segment.path,
         strokeColor: routeColor,
-        strokeOpacity: 1,
-        strokeWeight: isSelected ? 10 : 5,
+        strokeOpacity: navigationActive ? 1 : (isSelected ? 0.8 : 0.65),
+        strokeWeight: navigationActive ? (isSelected ? 10 : 5) : (isSelected ? 7 : 4),
         zIndex: isSelected ? 200 : 20 + index,
         clickable: true
       });
@@ -2480,9 +2776,9 @@ function drawRouteOverlays() {
         const tollPolyline = new google.maps.Polyline({
           map,
           path: segment.path,
-          strokeColor: "#d93025",
-          strokeOpacity: isSelected ? 1 : 0.9,
-          strokeWeight: isSelected ? 8 : 4,
+          strokeColor: "#8e24aa",
+          strokeOpacity: navigationActive ? 1 : (isSelected ? 0.9 : 0.75),
+          strokeWeight: navigationActive ? (isSelected ? 8 : 4) : (isSelected ? 5 : 3),
           zIndex: isSelected ? 220 : 210 + index,
           clickable: true
         });
@@ -3179,6 +3475,9 @@ function drawRouteOverlays() {
       candidate.routeIndex
     );
     const route = singleResult.routes[0];
+    const shouldLoadTraffic = !suppressNextTrafficRouteDisplay;
+    suppressNextTrafficRouteDisplay = false;
+    cancelTrafficRouteDisplay();
 
     directionsRenderer.setOptions({
       preserveViewport: true,
@@ -3223,6 +3522,9 @@ function drawRouteOverlays() {
     }
 
     drawRouteOverlays();
+    if (shouldLoadTraffic) {
+      void showSelectedRouteTraffic(candidate, route);
+    }
 
     if (announce) {
       hideStatus();
@@ -3355,6 +3657,7 @@ function showRouteChoices(candidates, searchId) {
     rerouteInProgress = false;
     hideRouteChoices();
     clearRouteOverlays();
+    cancelTrafficRouteDisplay();
     displayedRouteSearchId = 0;
     routeCandidates = [];
     selectedRouteIndex = 0;
@@ -4317,6 +4620,7 @@ followToggle.checked = true;
       }
 
       clearRouteOverlays();
+      cancelTrafficRouteDisplay();
       directionsRenderer.setOptions({
         polylineOptions: {
           strokeColor: "#1a73e8",
@@ -4390,6 +4694,7 @@ followToggle.checked = true;
     offRouteCount = 0;
     rerouteInProgress = false;
     navigationActive = true;
+    drawRouteOverlays();
     displayedNavigationPoint = point;
     displayedNavigationHeading = lastKnownHeading;
     landscapeLocationTogglePrimed = false;
@@ -5649,7 +5954,8 @@ followToggle.checked = true;
       });
       map.addListener("contextmenu", cancelLongPress);
 
-      trafficLayer = new google.maps.TrafficLayer();
+      trafficLayer = new google.maps.TrafficLayer({ map });
+      if (trafficToggle) trafficToggle.checked = true;
       createNavigationInfoPanel();
       createHeadingButton();
 
@@ -5657,7 +5963,14 @@ followToggle.checked = true;
       startGps();
 
       if (new URLSearchParams(window.location.search).get("shared") === "1") {
-        setTimeout(searchRoute, 500);
+        setTimeout(async () => {
+          suppressNextTrafficRouteDisplay = true;
+          try {
+            await searchRoute();
+          } finally {
+            suppressNextTrafficRouteDisplay = false;
+          }
+        }, 500);
       }
     } catch (error) {
       console.error("Map initialization error:", error);
