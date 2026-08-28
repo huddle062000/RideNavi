@@ -2010,7 +2010,9 @@
       return;
     }
 
-    const label = !landscapeLocationTogglePrimed
+    const label = !followToggle?.checked && !navigationOverviewActive
+      ? "現在地中心表示に戻る"
+      : !landscapeLocationTogglePrimed
       ? "現在地を中心に表示"
       : navigationOverviewActive
         ? "現在地中心表示に戻る"
@@ -2027,7 +2029,26 @@
     floatingLocationButton.title = label;
   }
 
+  function pauseNavigationFollow() {
+    if (!navigationActive || navigationOverviewActive || !followToggle) return;
+
+    cancelNavigationStartMapAnimation();
+    followToggle.checked = false;
+    if (returnToLocationButton) returnToLocationButton.hidden = false;
+    syncFloatingLocationButton();
+    hideStatus();
+  }
+
   function handleFloatingLocationButton() {
+    if (
+      navigationActive &&
+      !navigationOverviewActive &&
+      !followToggle?.checked
+    ) {
+      centerOnCurrentLocation();
+      return;
+    }
+
     if (!isLandscapeNavigationLayout()) {
       centerOnCurrentLocation();
       return;
@@ -4061,6 +4082,10 @@ function showRouteChoices(candidates, searchId) {
     const enableFollow = () => {
       if (!navigationActive) return;
       followToggle.checked = true;
+      const latestPoint = getCurrentLatLng();
+      if (latestPoint) setNavigationCameraLocation(latestPoint);
+      if (returnToLocationButton) returnToLocationButton.hidden = true;
+      syncFloatingLocationButton();
       navigationStartAnimationTimers = [];
     };
 
@@ -4223,18 +4248,20 @@ function showRouteChoices(candidates, searchId) {
       showStatus("現在地を取得しています");
       return;
     }
-followToggle.checked = true;
+    followToggle.checked = true;
     navigationOverviewActive = false;
     document.body.classList.remove("is-overview");
     if (returnToLocationButton) returnToLocationButton.hidden = true;
     $("rideNaviHeadingControl")?.classList.remove("is-overview-hidden");
     if (navigationActive) {
       map.setZoom(16);
-      panToNavigationLocation(point);
+      setNavigationCameraLocation(point);
+      landscapeLocationTogglePrimed = true;
     } else {
       map.panTo(point);
       map.setZoom(16);
     }
+    syncFloatingLocationButton();
   }
 
   function toggleTrafficLayer() {
@@ -5784,7 +5811,10 @@ followToggle.checked = true;
           ctrlKey: event.ctrlKey,
           point: { x: event.clientX, y: event.clientY }
         });
-        if (activeMapPointers.size > 1) cancelLongPress();
+        if (activeMapPointers.size > 1) {
+          cancelLongPress();
+          pauseNavigationFollow();
+        }
       }, { capture: true, passive: true });
 
       window.addEventListener("pointermove", (event) => {
@@ -5817,24 +5847,37 @@ followToggle.checked = true;
         capture: true,
         passive: true
       });
+    } else {
+      mapDiv.addEventListener("touchstart", (event) => {
+        if (event.touches?.length > 1) pauseNavigationFollow();
+      }, { capture: true, passive: true });
     }
+
+    mapDiv.addEventListener("wheel", pauseNavigationFollow, {
+      capture: true,
+      passive: true
+    });
+    mapDiv.addEventListener("dblclick", pauseNavigationFollow, {
+      capture: true,
+      passive: true
+    });
 
     map.addListener("dragstart", () => {
       if (!supportsPointerEvents || !longPressStartPoint) cancelLongPress();
       if (!followToggle) return;
 
-      followToggle.checked = false;
-      hideStatus();
+      if (navigationActive) {
+        pauseNavigationFollow();
+      } else {
+        followToggle.checked = false;
+        hideStatus();
+      }
     });
     map.addListener("dragend", () => {
       if (!navigationActive || navigationOverviewActive || !returnToLocationButton) {
         return;
       }
-      const point = getCurrentLatLng();
-      const bounds = map.getBounds();
-      returnToLocationButton.hidden = Boolean(
-        point && bounds?.contains(new google.maps.LatLng(point))
-      );
+      returnToLocationButton.hidden = Boolean(followToggle?.checked);
     });
 
   

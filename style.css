@@ -119,6 +119,7 @@ body.is-navigating .destination-map-label{display:none}
 .route-map-label.is-selected span{color:rgba(255,255,255,.9)}
 .route-map-label:focus-visible{outline:3px solid rgba(26,115,232,.32);outline-offset:2px}
 body.is-navigating .search-bar,body.is-navigating .floating-location,body.is-navigating .route-summary-panel,body.is-navigating .destination-sheet{display:none!important}
+body.is-navigating:not(.is-overview) .return-location{bottom:calc(260px + env(safe-area-inset-bottom))}
 body.is-overview .navigation-guidance,body.is-overview .navigation-bottom,#rideNaviHeadingControl.is-overview-hidden{display:none!important}
 
 #rideNaviHeadingControl{position:fixed!important;z-index:39!important;right:16px!important;left:auto!important;bottom:calc(82px + env(safe-area-inset-bottom))!important;display:flex!important}
