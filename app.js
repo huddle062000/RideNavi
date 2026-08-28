@@ -437,7 +437,7 @@
         path,
         strokeColor: speed === "TRAFFIC_JAM" ? "#d93025" : "#f9ab00",
         strokeOpacity: 0.96,
-        strokeWeight: navigationActive ? 8 : 6,
+        strokeWeight: 8,
         zIndex: speed === "TRAFFIC_JAM" ? 241 : 240,
         clickable: false
       });
@@ -5954,8 +5954,8 @@ followToggle.checked = true;
       });
       map.addListener("contextmenu", cancelLongPress);
 
-      trafficLayer = new google.maps.TrafficLayer({ map });
-      if (trafficToggle) trafficToggle.checked = true;
+      trafficLayer = new google.maps.TrafficLayer();
+      if (trafficToggle) trafficToggle.checked = false;
       createNavigationInfoPanel();
       createHeadingButton();
 
